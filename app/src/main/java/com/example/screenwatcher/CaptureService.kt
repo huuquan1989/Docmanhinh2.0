@@ -69,11 +69,11 @@ class CaptureService : Service() {
     override fun onStartCommand(i: Intent?, flags: Int, startId: Int): Int {
         when (i?.action) {
             A_START -> start()
-            A_MONITOR -> setMonitoring(i.getBooleanExtra("on", false))
-            A_BUBBLE -> if (i.getBooleanExtra("on", true)) showBubble() else { fab?.hide() }
+            A_MONITOR -> setMonitoring(i?.getBooleanExtra("on", false) ?: false)
+            A_BUBBLE -> if (i?.getBooleanExtra("on", true) != false) showBubble() else { fab?.hide() }
             A_STOP -> { stopAll(); return START_NOT_STICKY }
-            A_PICK -> pick(i.getStringExtra("mode") ?: "REGIONS", i.getStringExtra("id") ?: "")
-            A_TEST -> test(i.getStringExtra("id") ?: "")
+            A_PICK -> pick(i?.getStringExtra("mode") ?: "REGIONS", i?.getStringExtra("id") ?: "")
+            A_TEST -> test(i?.getStringExtra("id") ?: "")
         }
         return START_NOT_STICKY
     }
