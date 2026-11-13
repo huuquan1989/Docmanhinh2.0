@@ -81,6 +81,8 @@ adb install -r apk/ScreenWatcher-debug.apk
      wait 500
      tap 540 1800
      ```
+   - **Thêm thao tác lên màn hình**: chọn *Chạm*, *Chạm và giữ* hoặc *Vuốt*, đặt thời gian (ms), số lần và thời gian nghỉ giữa các lần, rồi chạm (hoặc kéo, với *Vuốt*) lên màn hình thật để chọn vị trí. Dòng lệnh tương ứng được thêm vào macro, vd `swipe 540 1600 540 600 300 times=5 gap=400`.
+   - **Lặp lại**: sau khi chạy hết macro, luật có thể lặp lại N lần (1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi), nghỉ giữa các lần theo ms đã đặt.
    - Bấm **Thử luật** để kiểm tra khớp hay không (chưa chạy macro), rồi **Lưu**.
 3. Ở màn hình chính bật **Bật theo dõi**. Dừng bằng công tắc hoặc nút "Dừng hẳn" ở thông báo.
 4. **Nút nổi** (hiện sau khi cấp quyền chụp màn hình, tắt/bật bằng công tắc "Hiện nút nổi"): kéo để di chuyển, chạm để mở bảng nhanh gồm công tắc **Theo dõi**, danh sách luật để bật/tắt từng luật, **+ Luật** (thêm luật mới), **Mở app**, **Ẩn nút**. Nút xanh = đang theo dõi, xám = đang tắt. Nút tự ẩn khi bạn đang khoanh vùng/ảnh mẫu.

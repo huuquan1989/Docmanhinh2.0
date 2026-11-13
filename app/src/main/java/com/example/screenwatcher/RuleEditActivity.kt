@@ -1,6 +1,7 @@
 package com.example.screenwatcher
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -32,6 +33,8 @@ class RuleEditActivity : Activity() {
     private lateinit var tplIv: ImageView
     private lateinit var macro: EditText
     private lateinit var cool: EditText
+    private lateinit var repeatEt: EditText
+    private lateinit var repeatDelayEt: EditText
     private lateinit var textGroup: LinearLayout
     private lateinit var imageGroup: LinearLayout
 
@@ -112,12 +115,24 @@ class RuleEditActivity : Activity() {
         root.addView(TextView(this).apply {
             textSize = 11f
             text = "tap_match [dx dy]  chạm vào chỗ vừa tìm thấy\n" +
-                "tap x y  |  longtap x y [ms]\n" +
+                "tap x y [ms]  |  longtap x y [ms]\n" +
                 "swipe x1 y1 x2 y2 [ms]\n" +
+                "Thêm  times=N gap=ms  vào cuối dòng chạm/giữ/vuốt để lặp N lần\n" +
                 "wait ms  |  back  |  home  |  recents\n" +
                 "# ghi chú"
         })
-        root.addView(btn("Thêm điểm chạm bằng cách chạm lên màn hình") { pick("POINT") })
+        root.addView(btn("Thêm thao tác (chạm / giữ / vuốt) lên màn hình") { actionDialog() })
+
+        root.addView(label("Sau khi chạy hết thao tác, lặp lại tổng cộng (lần). 1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi"))
+        repeatEt = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.repeatCount.toString())
+        }
+        root.addView(repeatEt)
+        root.addView(label("Nghỉ giữa các lần lặp (ms)"))
+        repeatDelayEt = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.repeatDelayMs.toString())
+        }
+        root.addView(repeatDelayEt)
 
         root.addView(label("Thời gian nghỉ giữa 2 lần kích hoạt (ms)"))
         cool = EditText(this).apply {
@@ -145,6 +160,55 @@ class RuleEditActivity : Activity() {
         refreshTemplate()
     }
 
+    /** Hộp thoại chọn kiểu thao tác (chạm / chạm giữ / vuốt), thời gian và số lần, rồi chọn vị trí trên màn hình. */
+    private fun actionDialog() {
+        val kinds = listOf("tap", "longtap", "swipe")
+        val defMs = listOf("60", "800", "300")
+        val msLabels = listOf("Thời gian chạm (ms)", "Thời gian giữ (ms)", "Thời gian vuốt (ms)")
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val kind = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@RuleEditActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf("Chạm", "Chạm và giữ", "Vuốt"),
+            )
+        }
+        val msLabel = label(msLabels[0])
+        val ms = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText(defMs[0]) }
+        val times = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText("1") }
+        val gap = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText("150") }
+        kind.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                msLabel.text = msLabels[pos]; ms.setText(defMs[pos])
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+        box.addView(label("Kiểu thao tác"))
+        box.addView(kind)
+        box.addView(msLabel)
+        box.addView(ms)
+        box.addView(label("Số lần chạm / vuốt"))
+        box.addView(times)
+        box.addView(label("Nghỉ giữa các lần (ms)"))
+        box.addView(gap)
+
+        AlertDialog.Builder(this)
+            .setTitle("Thêm thao tác")
+            .setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Chọn trên màn hình") { _, _ ->
+                val k = kind.selectedItemPosition
+                val d = (ms.text.toString().toLongOrNull() ?: defMs[k].toLong()).coerceIn(1L, 60_000L)
+                val n = (times.text.toString().toIntOrNull() ?: 1).coerceIn(1, 100_000)
+                val g = (gap.text.toString().toLongOrNull() ?: 150L).coerceAtLeast(0L)
+                pick(if (k == 2) "SWIPE" else "POINT") {
+                    putExtra("kind", kinds[k]); putExtra("ms", d); putExtra("times", n); putExtra("gap", g)
+                }
+            }
+            .setNegativeButton("Huỷ", null)
+            .show()
+    }
+
     private fun toggleGroups() {
         val isText = type.selectedItemPosition == 0
         textGroup.visibility = if (isText) View.VISIBLE else View.GONE
@@ -169,10 +233,12 @@ class RuleEditActivity : Activity() {
         rule.threshold = (thr.text.toString().toDoubleOrNull() ?: 0.85).coerceIn(0.5, 0.99)
         rule.macro = macro.text.toString()
         rule.cooldownMs = cool.text.toString().toLongOrNull() ?: 3000L
+        rule.repeatCount = (repeatEt.text.toString().toIntOrNull() ?: 1).coerceIn(0, 100_000)
+        rule.repeatDelayMs = (repeatDelayEt.text.toString().toLongOrNull() ?: 500L).coerceAtLeast(0)
     }
 
     /** Lưu luật rồi giao cho CaptureService hiện lớp phủ chọn trên màn hình thật. */
-    private fun pick(mode: String) {
+    private fun pick(mode: String, extra: Intent.() -> Unit = {}) {
         collect()
         RuleStore.upsert(this, rule)
         if (!Settings.canDrawOverlays(this)) {
@@ -183,7 +249,7 @@ class RuleEditActivity : Activity() {
         }
         startService(
             Intent(this, CaptureService::class.java)
-                .setAction(CaptureService.A_PICK).putExtra("mode", mode).putExtra("id", rule.id),
+                .setAction(CaptureService.A_PICK).putExtra("mode", mode).putExtra("id", rule.id).apply(extra),
         )
         Toast.makeText(this, "Mở màn hình cần chọn rồi kéo trên lớp phủ. Bấm ✋ để thao tác app, ✏ để vẽ lại.", Toast.LENGTH_LONG).show()
         finish()

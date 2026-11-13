@@ -17,25 +17,32 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 /**
  * Lớp phủ toàn màn hình để người dùng kéo chọn vùng (nhiều vùng) / ảnh mẫu / điểm chạm
  * ngay trên màn hình thật của ứng dụng khác.
  *
  * mode: "REGIONS" (nhiều vùng) | "TEMPLATE" (1 vùng -> cắt làm ảnh mẫu) | "POINT" (1 điểm chạm)
+ *       | "SWIPE" (kéo từ điểm đầu tới điểm cuối của cú vuốt)
  */
 class SelectorOverlay(
     private val ctx: Context,
     private val mode: String,
-    private val onFinish: (List<Region>, Point?) -> Unit,
+    private val onFinish: (List<Region>, Point?, Pair<Point, Point>?) -> Unit,
     private val onCancel: () -> Unit,
 ) {
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val rects = mutableListOf<Region>()
     private var cur: Region? = null
     private var point: Point? = null
+    private var sw1: Point? = null
+    private var sw2: Point? = null
     private var drawing = true
 
     private val dv = DrawView(ctx)
@@ -66,6 +73,7 @@ class SelectorOverlay(
             text = when (mode) {
                 "REGIONS" -> "Kéo để chọn vùng (có thể chọn nhiều vùng)"
                 "TEMPLATE" -> "Kéo để khoanh đúng hình cần nhận diện"
+                "SWIPE" -> "Kéo từ điểm bắt đầu đến điểm kết thúc của cú vuốt"
                 else -> "Chạm vào vị trí cần tự động chạm"
             }
             setTextColor(Color.WHITE)
@@ -94,7 +102,7 @@ class SelectorOverlay(
         }
         row.addView(mk("✔ Xong") { done() })
         row.addView(toggle)
-        row.addView(mk("⌫ Xoá") { rects.clear(); cur = null; point = null; dv.invalidate() })
+        row.addView(mk("⌫ Xoá") { rects.clear(); cur = null; point = null; sw1 = null; sw2 = null; dv.invalidate() })
         row.addView(mk("✖ Huỷ") { hide(); onCancel() })
         bar.orientation = LinearLayout.VERTICAL
         bar.addView(hint)
@@ -112,18 +120,22 @@ class SelectorOverlay(
     private fun done() {
         val ok = when (mode) {
             "POINT" -> point != null
+            "SWIPE" -> sw1 != null && sw2 != null
             else -> rects.isNotEmpty()
         }
         if (!ok) {
             toast("Chưa chọn gì cả"); return
         }
         hide()
-        onFinish(rects.toList(), point)
+        val a = sw1
+        val b = sw2
+        onFinish(rects.toList(), point, if (a != null && b != null) a to b else null)
     }
 
     private inner class DrawView(c: Context) : View(c) {
         private val fill = Paint().apply { color = 0x3300AAFF; style = Paint.Style.FILL }
         private val stroke = Paint().apply { color = 0xFF00AAFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 4f }
+        private val solid = Paint().apply { color = 0xFF00AAFF.toInt(); style = Paint.Style.FILL }
         private val txt = Paint().apply { color = Color.WHITE; textSize = 40f; isFakeBoldText = true }
         private val loc = IntArray(2)
         private var sx = 0
@@ -145,30 +157,52 @@ class SelectorOverlay(
                 c.drawLine(it.x - 60f, it.y.toFloat(), it.x + 60f, it.y.toFloat(), stroke)
                 c.drawLine(it.x.toFloat(), it.y - 60f, it.x.toFloat(), it.y + 60f, stroke)
             }
+            val a = sw1
+            val b = sw2
+            if (a != null && b != null) {
+                c.drawLine(a.x.toFloat(), a.y.toFloat(), b.x.toFloat(), b.y.toFloat(), stroke)
+                c.drawCircle(a.x.toFloat(), a.y.toFloat(), 30f, stroke)
+                c.drawCircle(b.x.toFloat(), b.y.toFloat(), 14f, solid)
+                val ang = atan2((b.y - a.y).toDouble(), (b.x - a.x).toDouble())
+                for (d in doubleArrayOf(2.6, -2.6)) {
+                    c.drawLine(
+                        b.x.toFloat(), b.y.toFloat(),
+                        b.x + (60 * cos(ang + d)).toFloat(), b.y + (60 * sin(ang + d)).toFloat(), stroke,
+                    )
+                }
+            }
             c.restore()
         }
 
         override fun onTouchEvent(e: MotionEvent): Boolean {
             val x = e.rawX.toInt()
             val y = e.rawY.toInt()
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    sx = x; sy = y; cur = null
-                    if (mode == "POINT") point = Point(x, y)
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (mode == "POINT") point = Point(x, y)
-                    else cur = Region(min(sx, x), min(sy, y), max(sx, x), max(sy, y))
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (mode == "POINT") point = Point(x, y)
-                    else cur?.let {
-                        if (it.w > 20 && it.h > 20) {
-                            if (mode == "TEMPLATE") rects.clear()
-                            rects.add(it)
+            when (mode) {
+                "POINT" -> if (e.action == MotionEvent.ACTION_DOWN || e.action == MotionEvent.ACTION_MOVE ||
+                    e.action == MotionEvent.ACTION_UP
+                ) point = Point(x, y)
+                "SWIPE" -> when (e.action) {
+                    MotionEvent.ACTION_DOWN -> { sw1 = Point(x, y); sw2 = null }
+                    MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                        sw2 = Point(x, y)
+                        val a = sw1
+                        if (e.action == MotionEvent.ACTION_UP && a != null && hypot((x - a.x).toDouble(), (y - a.y).toDouble()) < 30) {
+                            sw2 = null // quá ngắn, coi như chưa vuốt
                         }
                     }
-                    cur = null
+                }
+                else -> when (e.action) {
+                    MotionEvent.ACTION_DOWN -> { sx = x; sy = y; cur = null }
+                    MotionEvent.ACTION_MOVE -> cur = Region(min(sx, x), min(sy, y), max(sx, x), max(sy, y))
+                    MotionEvent.ACTION_UP -> {
+                        cur?.let {
+                            if (it.w > 20 && it.h > 20) {
+                                if (mode == "TEMPLATE") rects.clear()
+                                rects.add(it)
+                            }
+                        }
+                        cur = null
+                    }
                 }
             }
             invalidate()

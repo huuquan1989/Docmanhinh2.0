@@ -3,7 +3,6 @@ package com.example.screenwatcher
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
@@ -64,7 +63,7 @@ class FloatingButton(
 
     init {
         bubble.apply {
-            text = "SW"; textSize = 14f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
+            text = "SW"; textSize = 14f; setTextColor(Color.WHITE); isFakeBoldText = true
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(dp(BUBBLE), dp(BUBBLE))
             setOnTouchListener(DragListener())

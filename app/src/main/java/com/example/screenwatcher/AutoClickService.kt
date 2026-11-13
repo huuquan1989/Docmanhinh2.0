@@ -30,7 +30,7 @@ class AutoClickService : AccessibilityService() {
 
     private suspend fun gesture(p: Path, dur: Long): Boolean = suspendCancellableCoroutine { c ->
         val g = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(p, 0, dur.coerceAtLeast(1)))
+            .addStroke(GestureDescription.StrokeDescription(p, 0, dur.coerceIn(1, GestureDescription.getMaxGestureDuration())))
             .build()
         val ok = dispatchGesture(g, object : GestureResultCallback() {
             override fun onCompleted(d: GestureDescription?) { if (c.isActive) c.resume(true) }
@@ -48,15 +48,40 @@ class AutoClickService : AccessibilityService() {
 
 /**
  * Macro: mỗi dòng một lệnh
- *   tap_match [dx dy]        chạm vào vị trí vừa tìm thấy (có thể lệch dx, dy)
- *   tap x y                  chạm toạ độ
- *   longtap x y [ms]         giữ
- *   swipe x1 y1 x2 y2 [ms]   vuốt
- *   wait ms                  chờ
- *   back | home | recents    phím hệ thống
+ *   tap_match [dx dy] [ms=..]     chạm vào vị trí vừa tìm thấy (có thể lệch dx, dy; ms=.. để giữ)
+ *   tap x y [ms]                  chạm toạ độ (mặc định 60 ms)
+ *   longtap x y [ms]              chạm và giữ (mặc định 800 ms)
+ *   swipe x1 y1 x2 y2 [ms]        vuốt (mặc định 300 ms)
+ *   wait ms                       chờ
+ *   back | home | recents         phím hệ thống
  *   # ghi chú
+ * Các lệnh chạm/giữ/vuốt có thể thêm  times=N  (số lần lặp) và  gap=ms  (nghỉ giữa các lần, mặc định 150).
+ *   vd: swipe 540 1600 540 600 300 times=5 gap=400
  */
 object Macro {
+    private suspend fun repeatAction(times: Int, gap: Long, f: suspend () -> Unit) {
+        for (i in 0 until times) {
+            if (!AppState.monitoring) return
+            f()
+            if (i < times - 1) delay(gap)
+        }
+    }
+
+    /** Hậu tố ghi vào macro cho số lần / nghỉ giữa các lần. */
+    fun suffix(times: Int, gap: Long): String = if (times > 1) " times=$times gap=$gap" else ""
+
+    /** Chạy macro của luật, lặp theo cài đặt của luật (repeatCount: 1 = 1 lần, 0 = mãi mãi). */
+    suspend fun runRule(rule: Rule, mx: Int, my: Int) {
+        var n = 0
+        while (AppState.monitoring) {
+            run(rule.macro, mx, my)
+            n++
+            if (rule.repeatCount != 0 && n >= rule.repeatCount) break
+            delay(rule.repeatDelayMs.coerceAtLeast(50))
+        }
+        if (n > 1) AppState.log("↻ '${rule.name}' đã chạy $n lần")
+    }
+
     suspend fun run(script: String, mx: Int, my: Int) {
         val svc = AutoClickService.instance
         if (svc == null) {
@@ -64,15 +89,30 @@ object Macro {
             return
         }
         for (raw in script.lines()) {
+            if (!AppState.monitoring) return
             val line = raw.substringBefore('#').trim()
             if (line.isEmpty()) continue
             val p = line.split(Regex("\\s+"))
-            val a = p.drop(1).mapNotNull { it.toFloatOrNull() }
+            val rest = p.drop(1)
+            val opts = rest.filter { it.contains('=') }
+                .associate { it.substringBefore('=').lowercase() to it.substringAfter('=') }
+            val a = rest.filter { !it.contains('=') }.mapNotNull { it.toFloatOrNull() }
+            val times = (opts["times"]?.toIntOrNull() ?: 1).coerceIn(1, 100_000)
+            val gap = (opts["gap"]?.toLongOrNull() ?: 150L).coerceAtLeast(0)
+            val ms = opts["ms"]?.toLongOrNull()
             when (p[0].lowercase()) {
-                "tap_match" -> svc.tap(mx + (a.getOrNull(0) ?: 0f), my + (a.getOrNull(1) ?: 0f))
-                "tap" -> if (a.size >= 2) svc.tap(a[0], a[1])
-                "longtap" -> if (a.size >= 2) svc.tap(a[0], a[1], (a.getOrNull(2) ?: 800f).toLong())
-                "swipe" -> if (a.size >= 4) svc.swipe(a[0], a[1], a[2], a[3], (a.getOrNull(4) ?: 300f).toLong())
+                "tap_match" -> repeatAction(times, gap) {
+                    svc.tap(mx + (a.getOrNull(0) ?: 0f), my + (a.getOrNull(1) ?: 0f), ms ?: 60L)
+                }
+                "tap" -> if (a.size >= 2) repeatAction(times, gap) {
+                    svc.tap(a[0], a[1], (a.getOrNull(2)?.toLong()) ?: ms ?: 60L)
+                }
+                "longtap" -> if (a.size >= 2) repeatAction(times, gap) {
+                    svc.tap(a[0], a[1], (a.getOrNull(2)?.toLong()) ?: ms ?: 800L)
+                }
+                "swipe" -> if (a.size >= 4) repeatAction(times, gap) {
+                    svc.swipe(a[0], a[1], a[2], a[3], (a.getOrNull(4)?.toLong()) ?: ms ?: 300L)
+                }
                 "wait" -> delay((a.getOrNull(0) ?: 500f).toLong())
                 "back" -> svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 "home" -> svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)

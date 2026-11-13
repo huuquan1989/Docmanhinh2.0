@@ -32,11 +32,15 @@ data class Rule(
     var macro: String = "tap_match",
     var cooldownMs: Long = 3000,
     var enabled: Boolean = true,
+    /** Sau khi chạy hết macro: lặp lại tổng cộng bấy nhiêu lần (1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi). */
+    var repeatCount: Int = 1,
+    var repeatDelayMs: Long = 500,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("type", type).put("text", text)
         .put("fuzzy", fuzzy).put("threshold", threshold).put("macro", macro)
         .put("cooldownMs", cooldownMs).put("enabled", enabled)
+        .put("repeatCount", repeatCount).put("repeatDelayMs", repeatDelayMs)
         .put("regions", JSONArray().also { a -> regions.forEach { a.put(it.toJson()) } })
 
     companion object {
@@ -58,6 +62,8 @@ data class Rule(
                 macro = o.optString("macro", "tap_match"),
                 cooldownMs = o.optLong("cooldownMs", 3000),
                 enabled = o.optBoolean("enabled", true),
+                repeatCount = o.optInt("repeatCount", 1),
+                repeatDelayMs = o.optLong("repeatDelayMs", 500),
             )
         }
     }

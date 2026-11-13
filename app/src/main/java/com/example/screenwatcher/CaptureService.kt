@@ -69,11 +69,15 @@ class CaptureService : Service() {
     override fun onStartCommand(i: Intent?, flags: Int, startId: Int): Int {
         when (i?.action) {
             A_START -> start()
-            A_MONITOR -> setMonitoring(i?.getBooleanExtra("on", false) ?: false)
-            A_BUBBLE -> if (i?.getBooleanExtra("on", true) != false) showBubble() else { fab?.hide() }
+            A_MONITOR -> setMonitoring(i.getBooleanExtra("on", false))
+            A_BUBBLE -> if (i.getBooleanExtra("on", true)) showBubble() else { fab?.hide() }
             A_STOP -> { stopAll(); return START_NOT_STICKY }
-            A_PICK -> pick(i?.getStringExtra("mode") ?: "REGIONS", i?.getStringExtra("id") ?: "")
-            A_TEST -> test(i?.getStringExtra("id") ?: "")
+            A_PICK -> pick(
+                i.getStringExtra("mode") ?: "REGIONS", i.getStringExtra("id") ?: "",
+                i.getStringExtra("kind") ?: "tap", i.getLongExtra("ms", 60L),
+                i.getIntExtra("times", 1), i.getLongExtra("gap", 150L),
+            )
+            A_TEST -> test(i.getStringExtra("id") ?: "")
         }
         return START_NOT_STICKY
     }
@@ -203,7 +207,7 @@ class CaptureService : Service() {
             val hit = safeEval(rule, frame) ?: continue
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             AppState.log("✔ '${rule.name}' khớp (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}")
-            Macro.run(rule.macro, hit.x, hit.y)
+            Macro.runRule(rule, hit.x, hit.y)
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             break // chụp lại khung mới rồi mới xét tiếp
         }
@@ -233,7 +237,7 @@ class CaptureService : Service() {
             val crop = Bitmap.createBitmap(frame, l, t, w, h)
             val hit = if (tpl != null) TemplateMatcher.find(crop, tpl, rule.threshold)
             else TextMatcher.find(crop, rule)
-            if (hit != null) return Hit(hit.x + l, hit.y + t, hit.score)
+            if (hit != null) return hit.copy(x = hit.x + l, y = hit.y + t)
         }
         return null
     }
@@ -256,7 +260,7 @@ class CaptureService : Service() {
 
     /* ---------------- chọn vùng / ảnh mẫu / điểm chạm ---------------- */
 
-    private fun pick(mode: String, id: String) {
+    private fun pick(mode: String, id: String, kind: String = "tap", ms: Long = 60L, times: Int = 1, gap: Long = 150L) {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Cần cấp quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG).show()
             return
@@ -264,7 +268,7 @@ class CaptureService : Service() {
         overlay?.hide()
         fab?.hide()
         AppState.picking = true
-        overlay = SelectorOverlay(this, mode, onFinish = { rects, pt ->
+        overlay = SelectorOverlay(this, mode, onFinish = { rects, pt, swipe ->
             AppState.picking = false
             overlay = null
             val rule = RuleStore.get(this, id)
@@ -278,7 +282,16 @@ class CaptureService : Service() {
                     }
                     "POINT" -> {
                         if (pt != null) {
-                            rule.macro = rule.macro.trimEnd() + "\ntap ${pt.x} ${pt.y}"
+                            rule.macro = rule.macro.trimEnd() + "\n$kind ${pt.x} ${pt.y} $ms" + Macro.suffix(times, gap)
+                            RuleStore.upsert(this, rule)
+                        }
+                        reopenEditor(id)
+                    }
+                    "SWIPE" -> {
+                        if (swipe != null) {
+                            val (a, b) = swipe
+                            rule.macro = rule.macro.trimEnd() +
+                                "\nswipe ${a.x} ${a.y} ${b.x} ${b.y} $ms" + Macro.suffix(times, gap)
                             RuleStore.upsert(this, rule)
                         }
                         reopenEditor(id)
