@@ -42,6 +42,9 @@ class ActionEditorOverlay(
 
     private var sel: TouchAct? = null
     private var drawing = true
+    private var panelOpen = false   // cửa sổ cài đặt chỉ mở khi giữ 0,8 giây vào một điểm
+    private var handleAdded = false
+    private val handle = TextView(ctx)
 
     private val dv = CanvasView(ctx)
     private val bar = LinearLayout(ctx)
@@ -55,6 +58,11 @@ class ActionEditorOverlay(
         LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
         LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
     ).apply { y = 100 }
+
+    private val handleLp = params(
+        LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END,
+        LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
+    ).apply { x = dp(12); y = dp(100) }
 
     private fun params(w: Int, h: Int, g: Int, flags: Int) = LayoutParams(
         w, h, LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT,
@@ -83,21 +91,16 @@ class ActionEditorOverlay(
     /* ---------------- hiện / ẩn ---------------- */
 
     fun show() {
-        val hint = TextView(ctx).apply {
-            text = "Giữ ngón tay ~0,5 giây trên màn hình để thêm điểm chạm 1, 2, 3… " +
-                "Chạm vào số để chỉnh, kéo để di chuyển."
-            setTextColor(Color.WHITE)
-            setBackgroundColor(0xCC000000.toInt())
-            setPadding(24, 12, 24, 12)
-            gravity = Gravity.CENTER
-        }
         panel.orientation = LinearLayout.VERTICAL
         panel.setBackgroundColor(0xE6202020.toInt())
         panel.setPadding(dp(12), dp(6), dp(12), dp(6))
         panel.visibility = View.GONE
 
         fun mk(t: String, f: () -> Unit) = Button(ctx).apply {
-            text = t; isAllCaps = false; setOnClickListener { f() }
+            text = t; isAllCaps = false; textSize = 13f
+            minWidth = 0; minimumWidth = 0
+            setPadding(dp(4), 0, dp(4), 0)
+            setOnClickListener { f() }
         }
         val toggle = mk("✋ Thao tác") {}
         toggle.setOnClickListener {
@@ -117,18 +120,40 @@ class ActionEditorOverlay(
         add(toggle)
         add(mk("＋ Chạm") { addAtCenter() })
         add(mk("✖ Huỷ") { hide(); onCancel() })
+        add(mk("▾ Ẩn") { setBarVisible(false) })
 
         bar.orientation = LinearLayout.VERTICAL
-        bar.addView(hint)
         bar.addView(panel)
         bar.addView(row)
+
+        handle.apply {
+            text = "☰"; textSize = 20f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = GradientDrawable().apply { setColor(0xCC000000.toInt()); cornerRadius = dpf(22) }
+            setOnClickListener { setBarVisible(true) }
+        }
 
         wm.addView(dv, dvLp)
         wm.addView(bar, barLp)
         refreshPanel()
     }
 
+    /** Ẩn / hiện thanh thao tác phía dưới (khi ẩn có nút ☰ nhỏ để hiện lại). */
+    private fun setBarVisible(v: Boolean) {
+        bar.visibility = if (v) View.VISIBLE else View.GONE
+        if (!v && !handleAdded) {
+            handleAdded = runCatching { wm.addView(handle, handleLp) }.isSuccess
+        } else if (v && handleAdded) {
+            runCatching { wm.removeView(handle) }
+            handleAdded = false
+        }
+    }
+
     fun hide() {
+        if (handleAdded) {
+            runCatching { wm.removeView(handle) }
+            handleAdded = false
+        }
         runCatching { wm.removeView(dv) }
         runCatching { wm.removeView(bar) }
     }
@@ -196,15 +221,25 @@ class ActionEditorOverlay(
         val a = sel
         if (a == null || !acts.contains(a)) {
             sel = null
+            panelOpen = false
+        }
+        if (!panelOpen || a == null) {
             panel.visibility = View.GONE
             dv.invalidate()
             return
         }
         panel.visibility = View.VISIBLE
         val no = acts.indexOf(a) + 1
-        panel.addView(TextView(ctx).apply {
-            text = "Điểm $no"; setTextColor(Color.WHITE); textSize = 16f
-        })
+        val head = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        head.addView(
+            TextView(ctx).apply { text = "Điểm $no"; setTextColor(Color.WHITE); textSize = 16f },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        head.addView(chip("✕ Đóng", false) { panelOpen = false; refreshPanel() })
+        panel.addView(head)
         val kinds = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         for ((k, name) in listOf("tap" to "Chạm", "longtap" to "Chạm giữ", "swipe" to "Vuốt")) {
             kinds.addView(
@@ -273,6 +308,16 @@ class ActionEditorOverlay(
                 dragAct = a
                 dragEnd = false
                 offX = 0f; offY = 0f
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                refreshPanel()
+            }
+        }
+
+        private val openRun = Runnable {
+            val a = dragAct
+            if (a != null && !moved) {
+                sel = a
+                panelOpen = true
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                 refreshPanel()
             }
@@ -349,6 +394,7 @@ class ActionEditorOverlay(
                         offX = (if (dragEnd) a.x2 else a.x1) - x
                         offY = (if (dragEnd) a.y2 else a.y1) - y
                         refreshPanel()
+                        postDelayed(openRun, 800)
                     } else {
                         postDelayed(longRun, 500)
                     }
@@ -357,6 +403,7 @@ class ActionEditorOverlay(
                     if (!moved && hypot(x - downX, y - downY) > dpf(8)) {
                         moved = true
                         removeCallbacks(longRun)
+                        removeCallbacks(openRun)
                     }
                     val a = dragAct
                     if (a != null && (moved || longFired)) {
@@ -369,9 +416,11 @@ class ActionEditorOverlay(
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     removeCallbacks(longRun)
+                    removeCallbacks(openRun)
                     if (dragAct == null && !longFired && !moved) {
                         sel = null
-                        refreshPanel() // chạm vào chỗ trống: bỏ chọn
+                        panelOpen = false
+                        refreshPanel() // chạm vào chỗ trống: bỏ chọn và đóng cửa sổ cài đặt
                     }
                     dragAct = null
                     invalidate()
