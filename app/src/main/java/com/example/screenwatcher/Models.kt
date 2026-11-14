@@ -104,6 +104,16 @@ object RuleStore {
     fun bubblePos(c: Context): Pair<Int, Int> = prefs(c).getInt("bx", 0) to prefs(c).getInt("by", 300)
     fun setBubblePos(c: Context, x: Int, y: Int) = prefs(c).edit().putInt("bx", x).putInt("by", y).apply()
 
+    /** Chạy tuần tự: luật 1 -> 2 -> 3 ... xong hết thì lặp lại theo số vòng (0 = mãi). */
+    fun seqOn(c: Context): Boolean = prefs(c).getBoolean("seqOn", false)
+    fun setSeqOn(c: Context, on: Boolean) = prefs(c).edit().putBoolean("seqOn", on).apply()
+    fun seqCycles(c: Context): Int = prefs(c).getInt("seqCycles", 1)
+    fun setSeqCycles(c: Context, n: Int) = prefs(c).edit().putInt("seqCycles", n.coerceIn(0, 100_000)).apply()
+
+    /** Hiện hiệu ứng chạm / vuốt trên màn hình khi macro chạy. */
+    fun feedbackOn(c: Context): Boolean = prefs(c).getBoolean("feedback", true)
+    fun setFeedbackOn(c: Context, on: Boolean) = prefs(c).edit().putBoolean("feedback", on).apply()
+
     fun interval(c: Context): Long = prefs(c).getLong("interval", 700L)
     fun setInterval(c: Context, ms: Long) = prefs(c).edit().putLong("interval", ms.coerceIn(150L, 10_000L)).apply()
 }
@@ -113,6 +123,7 @@ object AppState {
     @Volatile var projectionReady = false
     @Volatile var monitoring = false
     @Volatile var picking = false
+    @Volatile var seqStatus = ""
     @Volatile var projCode = 0
     @Volatile var projData: android.content.Intent? = null
 

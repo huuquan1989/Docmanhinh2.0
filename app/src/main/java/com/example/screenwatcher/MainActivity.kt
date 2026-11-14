@@ -31,6 +31,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var list: LinearLayout
     private lateinit var monitorSwitch: Switch
     private lateinit var bubbleSwitch: Switch
+    private lateinit var seqSwitch: Switch
+    private lateinit var feedbackSwitch: Switch
+    private lateinit var cyclesEt: EditText
     private lateinit var intervalEt: EditText
     private var updating = false
     private val h = Handler(Looper.getMainLooper())
@@ -120,6 +123,35 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(bubbleSwitch)
 
+        feedbackSwitch = Switch(this).apply {
+            text = "Hiện hiệu ứng chạm / vuốt trên màn hình khi chạy"; setPadding(0, dp(4), 0, dp(4))
+            isChecked = RuleStore.feedbackOn(this@MainActivity)
+            setOnCheckedChangeListener { _, on ->
+                if (updating) return@setOnCheckedChangeListener
+                RuleStore.setFeedbackOn(this@MainActivity, on)
+            }
+        }
+        root.addView(feedbackSwitch)
+
+        seqSwitch = Switch(this).apply {
+            text = "Chạy tuần tự: luật 1 → 2 → 3… xong hết thì lặp lại"; setPadding(0, dp(4), 0, dp(4))
+            isChecked = RuleStore.seqOn(this@MainActivity)
+            setOnCheckedChangeListener { _, on ->
+                if (updating) return@setOnCheckedChangeListener
+                RuleStore.setSeqOn(this@MainActivity, on)
+            }
+        }
+        root.addView(seqSwitch)
+        val cy = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        cy.addView(TextView(this).apply { text = "Số vòng (1 = chỉ 1 lần, 0 = lặp mãi): " })
+        cyclesEt = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(RuleStore.seqCycles(this@MainActivity).toString())
+            minEms = 4
+        }
+        cy.addView(cyclesEt)
+        root.addView(cy)
+
         val iv = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         iv.addView(TextView(this).apply { text = "Quét mỗi (ms): " })
         intervalEt = EditText(this).apply {
@@ -150,6 +182,7 @@ class MainActivity : ComponentActivity() {
 
     private fun saveInterval() {
         intervalEt.text.toString().toLongOrNull()?.let { RuleStore.setInterval(this, it) }
+        cyclesEt.text.toString().toIntOrNull()?.let { RuleStore.setSeqCycles(this, it) }
     }
 
     override fun onResume() {
@@ -168,7 +201,8 @@ class MainActivity : ComponentActivity() {
         fun m(ok: Boolean) = if (ok) "✔" else "✘"
         status.text = "Hiển thị trên app khác: ${m(Settings.canDrawOverlays(this))}   " +
             "Trợ năng: ${m(AutoClickService.instance != null)}   " +
-            "Chụp màn hình: ${m(AppState.projectionReady)}"
+            "Chụp màn hình: ${m(AppState.projectionReady)}" +
+            (if (AppState.monitoring && AppState.seqStatus.isNotEmpty()) "\n${AppState.seqStatus}" else "")
         updating = true
         monitorSwitch.isChecked = AppState.monitoring
         bubbleSwitch.isChecked = RuleStore.bubbleOn(this)
@@ -176,11 +210,27 @@ class MainActivity : ComponentActivity() {
         logView.text = AppState.logText()
     }
 
+    private fun smallBtn(t: String, f: () -> Unit) = Button(this).apply {
+        text = t; isAllCaps = false; minWidth = 0; minimumWidth = 0
+        setPadding(dp(14), 0, dp(14), 0)
+        setOnClickListener { f() }
+    }
+
+    /** Đổi thứ tự luật (thứ tự này cũng là thứ tự chạy ở chế độ tuần tự). */
+    private fun move(i: Int, d: Int) {
+        val l = RuleStore.load(this)
+        val j = i + d
+        if (j < 0 || j >= l.size) return
+        val t = l[i]; l[i] = l[j]; l[j] = t
+        RuleStore.saveAll(this, l)
+        rebuildList()
+    }
+
     private fun rebuildList() {
         list.removeAllViews()
         val rules = RuleStore.load(this)
         if (rules.isEmpty()) list.addView(TextView(this).apply { text = "(chưa có luật nào)" })
-        for (r in rules) {
+        for ((idx, r) in rules.withIndex()) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, dp(6), 0, dp(6))
@@ -188,11 +238,20 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(this@MainActivity, RuleEditActivity::class.java).putExtra("id", r.id))
                 }
             }
-            row.addView(CheckBox(this).apply {
-                text = r.name
-                isChecked = r.enabled
-                setOnCheckedChangeListener { _, on -> r.enabled = on; RuleStore.upsert(this@MainActivity, r) }
-            })
+            val head = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            }
+            head.addView(
+                CheckBox(this).apply {
+                    text = "${idx + 1}. ${r.name}"
+                    isChecked = r.enabled
+                    setOnCheckedChangeListener { _, on -> r.enabled = on; RuleStore.upsert(this@MainActivity, r) }
+                },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            head.addView(smallBtn("▲") { move(idx, -1) })
+            head.addView(smallBtn("▼") { move(idx, 1) })
+            row.addView(head)
             val what = if (r.type == Rule.TEXT) "Chữ: \"${r.text}\"" else "Hình ảnh mẫu"
             val where = if (r.regions.isEmpty()) "toàn màn hình" else "${r.regions.size} vùng"
             row.addView(TextView(this).apply {

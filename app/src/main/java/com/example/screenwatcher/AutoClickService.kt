@@ -2,12 +2,26 @@ package com.example.screenwatcher
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PixelFormat
 import android.graphics.Path
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
 
 /** Dịch vụ trợ năng: thực hiện chạm / vuốt / Back / Home thay người dùng. */
 class AutoClickService : AccessibilityService() {
@@ -39,11 +53,89 @@ class AutoClickService : AccessibilityService() {
         if (!ok && c.isActive) c.resume(false)
     }
 
+    private val ui = Handler(Looper.getMainLooper())
+
+    /** Vẽ hiệu ứng chạm / vuốt lên màn hình để người dùng quan sát (có thể tắt trong app). */
+    fun flash(kind: String, x1: Float, y1: Float, x2: Float, y2: Float, dur: Long, label: String) {
+        if (!RuleStore.feedbackOn(this)) return
+        ui.post {
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val v = FlashView(this, kind, x1, y1, x2, y2, dur, label)
+            val lp = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT,
+            )
+            if (runCatching { wm.addView(v, lp) }.isSuccess) {
+                ui.postDelayed({ runCatching { wm.removeView(v) } }, dur + 450)
+            }
+        }
+    }
+
     suspend fun tap(x: Float, y: Float, dur: Long = 60): Boolean =
         gesture(Path().apply { moveTo(x, y) }, dur)
 
     suspend fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, dur: Long = 300): Boolean =
         gesture(Path().apply { moveTo(x1, y1); lineTo(x2, y2) }, dur)
+}
+
+/** Hiệu ứng ngắn: vòng tròn cho chạm / giữ, đường + chấm chạy cho vuốt. */
+private class FlashView(
+    c: Context,
+    private val kind: String,
+    private val x1: Float,
+    private val y1: Float,
+    private val x2: Float,
+    private val y2: Float,
+    private val dur: Long,
+    private val label: String,
+) : View(c) {
+    private val d = c.resources.displayMetrics.density
+    private val t0 = SystemClock.uptimeMillis()
+    private val fade = 350L
+    private val col = when (kind) {
+        "longtap" -> 0xFFFB8C00.toInt()
+        "swipe" -> 0xFF43A047.toInt()
+        else -> 0xFF1E88E5.toInt()
+    }
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3 * d; color = col }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = col }
+    private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = 16 * d; isFakeBoldText = true; setShadowLayer(4f, 0f, 0f, Color.BLACK)
+    }
+
+    override fun onDraw(c: Canvas) {
+        val el = SystemClock.uptimeMillis() - t0
+        val a = if (el <= dur) 255 else (255 * (1f - (el - dur) / fade.toFloat())).toInt().coerceIn(0, 255)
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        c.save()
+        c.translate(-loc[0].toFloat(), -loc[1].toFloat())
+        line.alpha = a
+        dot.alpha = (a * 0.7f).toInt()
+        if (kind == "swipe") {
+            c.drawLine(x1, y1, x2, y2, line)
+            c.drawCircle(x1, y1, 16 * d, line)
+            val p = (el / max(dur, 1L).toFloat()).coerceIn(0f, 1f)
+            c.drawCircle(x1 + (x2 - x1) * p, y1 + (y2 - y1) * p, 14 * d, dot)
+            val ang = atan2((y2 - y1).toDouble(), (x2 - x1).toDouble())
+            for (s in doubleArrayOf(2.6, -2.6)) {
+                c.drawLine(
+                    x2, y2,
+                    x2 + (22 * d * cos(ang + s)).toFloat(), y2 + (22 * d * sin(ang + s)).toFloat(), line,
+                )
+            }
+        } else {
+            val g = (el / (dur + fade).toFloat()).coerceIn(0f, 1f)
+            c.drawCircle(x1, y1, (16 + 24 * g) * d, line)
+            c.drawCircle(x1, y1, 12 * d, dot)
+        }
+        if (label.isNotEmpty()) c.drawText(label, x1 + 20 * d, y1 - 20 * d, txt)
+        c.restore()
+        if (el < dur + fade) postInvalidateOnAnimation()
+    }
 }
 
 /**
@@ -59,13 +151,15 @@ class AutoClickService : AccessibilityService() {
  *   vd: swipe 540 1600 540 600 300 times=5 gap=400
  */
 object Macro {
-    private suspend fun repeatAction(times: Int, gap: Long, f: suspend () -> Unit) {
+    private suspend fun repeatAction(times: Int, gap: Long, f: suspend (Int) -> Unit) {
         for (i in 0 until times) {
             if (!AppState.monitoring) return
-            f()
+            f(i)
             if (i < times - 1) delay(gap)
         }
     }
+
+    private fun lab(times: Int, i: Int): String = if (times > 1) "${i + 1}/$times" else ""
 
     /** Hậu tố ghi vào macro cho số lần / nghỉ giữa các lần. */
     fun suffix(times: Int, gap: Long): String = if (times > 1) " times=$times gap=$gap" else ""
@@ -101,17 +195,27 @@ object Macro {
             val gap = (opts["gap"]?.toLongOrNull() ?: 150L).coerceAtLeast(0)
             val ms = opts["ms"]?.toLongOrNull()
             when (p[0].lowercase()) {
-                "tap_match" -> repeatAction(times, gap) {
-                    svc.tap(mx + (a.getOrNull(0) ?: 0f), my + (a.getOrNull(1) ?: 0f), ms ?: 60L)
+                "tap_match" -> repeatAction(times, gap) { i ->
+                    val x = mx + (a.getOrNull(0) ?: 0f)
+                    val y = my + (a.getOrNull(1) ?: 0f)
+                    val d = ms ?: 60L
+                    svc.flash(if (d >= 500L) "longtap" else "tap", x, y, x, y, d, lab(times, i))
+                    svc.tap(x, y, d)
                 }
-                "tap" -> if (a.size >= 2) repeatAction(times, gap) {
-                    svc.tap(a[0], a[1], (a.getOrNull(2)?.toLong()) ?: ms ?: 60L)
+                "tap" -> if (a.size >= 2) repeatAction(times, gap) { i ->
+                    val d = (a.getOrNull(2)?.toLong()) ?: ms ?: 60L
+                    svc.flash("tap", a[0], a[1], a[0], a[1], d, lab(times, i))
+                    svc.tap(a[0], a[1], d)
                 }
-                "longtap" -> if (a.size >= 2) repeatAction(times, gap) {
-                    svc.tap(a[0], a[1], (a.getOrNull(2)?.toLong()) ?: ms ?: 800L)
+                "longtap" -> if (a.size >= 2) repeatAction(times, gap) { i ->
+                    val d = (a.getOrNull(2)?.toLong()) ?: ms ?: 800L
+                    svc.flash("longtap", a[0], a[1], a[0], a[1], d, lab(times, i))
+                    svc.tap(a[0], a[1], d)
                 }
-                "swipe" -> if (a.size >= 4) repeatAction(times, gap) {
-                    svc.swipe(a[0], a[1], a[2], a[3], (a.getOrNull(4)?.toLong()) ?: ms ?: 300L)
+                "swipe" -> if (a.size >= 4) repeatAction(times, gap) { i ->
+                    val d = (a.getOrNull(4)?.toLong()) ?: ms ?: 300L
+                    svc.flash("swipe", a[0], a[1], a[2], a[3], d, lab(times, i))
+                    svc.swipe(a[0], a[1], a[2], a[3], d)
                 }
                 "wait" -> delay((a.getOrNull(0) ?: 500f).toLong())
                 "back" -> svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)

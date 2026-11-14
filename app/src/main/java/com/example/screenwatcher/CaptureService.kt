@@ -63,6 +63,10 @@ class CaptureService : Service() {
     private var fab: FloatingButton? = null
     private var loop: Job? = null
     private val lastFire = HashMap<String, Long>()
+    private var editor: ActionEditorOverlay? = null
+    private var seqIndex = 0
+    private var seqCycle = 0
+    private var seqLogged = -1
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -83,7 +87,10 @@ class CaptureService : Service() {
     }
 
     private fun setMonitoring(on: Boolean) {
+        val was = AppState.monitoring
         AppState.monitoring = on && projection != null
+        if (AppState.monitoring && !was) { seqIndex = 0; seqCycle = 0; seqLogged = -1 }
+        if (!AppState.monitoring) AppState.seqStatus = ""
         getSystemService(NotificationManager::class.java).notify(1, notif())
         AppState.log(if (AppState.monitoring) "▶ Bắt đầu theo dõi" else "⏸ Dừng theo dõi")
         fab?.refresh()
@@ -201,6 +208,7 @@ class CaptureService : Service() {
 
     private suspend fun tick() {
         val frame = grab() ?: return
+        if (RuleStore.seqOn(this)) { tickSequence(frame); return }
         for (rule in RuleStore.load(this).filter { it.enabled }) {
             val now = SystemClock.elapsedRealtime()
             if (now - (lastFire[rule.id] ?: -1_000_000L) < rule.cooldownMs) continue
@@ -210,6 +218,40 @@ class CaptureService : Service() {
             Macro.runRule(rule, hit.x, hit.y)
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             break // chụp lại khung mới rồi mới xét tiếp
+        }
+    }
+
+    /**
+     * Chế độ tuần tự: chờ luật 1 khớp -> chạy macro -> chờ luật 2 ... -> hết luật thì tính là xong 1 vòng,
+     * rồi lặp lại theo số vòng đã đặt (0 = mãi mãi). Chỉ các luật đang bật mới tham gia, theo thứ tự trong danh sách.
+     */
+    private suspend fun tickSequence(frame: Bitmap) {
+        val rules = RuleStore.load(this).filter { it.enabled }
+        if (rules.isEmpty()) return
+        if (seqIndex >= rules.size) seqIndex = 0
+        val total = RuleStore.seqCycles(this)
+        val rule = rules[seqIndex]
+        val cyc = if (total == 0) "${seqCycle + 1}" else "${seqCycle + 1}/$total"
+        AppState.seqStatus = "Tuần tự: vòng $cyc • đang chờ luật ${seqIndex + 1}/${rules.size} '${rule.name}'"
+        if (seqLogged != seqIndex) {
+            seqLogged = seqIndex
+            AppState.log("⏳ Chờ luật ${seqIndex + 1}/${rules.size}: '${rule.name}'")
+        }
+        val hit = safeEval(rule, frame) ?: return
+        AppState.log("✔ [${seqIndex + 1}/${rules.size}] '${rule.name}' khớp (${"%.2f".format(hit.score)}) tại ${hit.x},${hit.y}")
+        Macro.runRule(rule, hit.x, hit.y)
+        if (!AppState.monitoring) return
+        seqIndex++
+        seqLogged = -1
+        if (seqIndex >= rules.size) {
+            seqIndex = 0
+            seqCycle++
+            if (total != 0 && seqCycle >= total) {
+                AppState.log("✔ Hoàn thành $seqCycle vòng, dừng theo dõi")
+                setMonitoring(false)
+                return
+            }
+            AppState.log("↻ Bắt đầu vòng ${seqCycle + 1}" + (if (total == 0) "" else "/$total"))
         }
     }
 
@@ -261,6 +303,7 @@ class CaptureService : Service() {
     /* ---------------- chọn vùng / ảnh mẫu / điểm chạm ---------------- */
 
     private fun pick(mode: String, id: String, kind: String = "tap", ms: Long = 60L, times: Int = 1, gap: Long = 150L) {
+        if (mode == "ACTIONS") { pickActions(id); return }
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Cần cấp quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG).show()
             return
@@ -312,6 +355,40 @@ class CaptureService : Service() {
         }).also { it.show() }
     }
 
+    /** Lớp phủ chỉnh điểm chạm / vuốt của luật: hiện số 1, 2, 3..., giữ ngón tay để thêm, chạm để chỉnh. */
+    private fun pickActions(id: String) {
+        val rule = RuleStore.get(this, id) ?: return
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "Cần cấp quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG).show()
+            return
+        }
+        overlay?.hide(); overlay = null
+        editor?.hide()
+        fab?.hide()
+        AppState.picking = true
+        val base = rule.macro
+        editor = ActionEditorOverlay(
+            this, MacroEdit.parse(base).toMutableList(),
+            onDone = { acts ->
+                AppState.picking = false
+                editor = null
+                (RuleStore.get(this, id) ?: rule).let { r ->
+                    r.macro = MacroEdit.apply(base, acts)
+                    RuleStore.upsert(this, r)
+                }
+                AppState.log("Đã lưu ${acts.size} điểm chạm/vuốt cho '${rule.name}'")
+                showBubble()
+                reopenEditor(id)
+            },
+            onCancel = {
+                AppState.picking = false
+                editor = null
+                showBubble()
+                reopenEditor(id)
+            },
+        ).also { it.show() }
+    }
+
     private fun saveTemplate(rule: Rule, rg: Region) {
         val f = grab()
         if (f == null) {
@@ -358,6 +435,7 @@ class CaptureService : Service() {
     private fun teardown() {
         loop?.cancel()
         overlay?.hide(); overlay = null
+        editor?.hide(); editor = null
         fab?.hide(); fab = null
         vd?.release(); vd = null
         reader?.close(); reader = null

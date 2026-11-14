@@ -183,6 +183,11 @@ class FloatingButton(
             }
         }
         panel.addView(sw)
+        if (AppState.monitoring && AppState.seqStatus.isNotEmpty()) {
+            panel.addView(TextView(c).apply {
+                text = AppState.seqStatus; setTextColor(0xFFBBBBBB.toInt()); textSize = 12f
+            })
+        }
 
         val rules = RuleStore.load(ctx)
         val list = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }

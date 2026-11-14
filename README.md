@@ -83,9 +83,12 @@ adb install -r apk/ScreenWatcher-debug.apk
      ```
    - **Thêm thao tác lên màn hình**: chọn *Chạm*, *Chạm và giữ* hoặc *Vuốt*, đặt thời gian (ms), số lần và thời gian nghỉ giữa các lần, rồi chạm (hoặc kéo, với *Vuốt*) lên màn hình thật để chọn vị trí. Dòng lệnh tương ứng được thêm vào macro, vd `swipe 540 1600 540 600 300 times=5 gap=400`.
    - **Lặp lại**: sau khi chạy hết macro, luật có thể lặp lại N lần (1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi), nghỉ giữa các lần theo ms đã đặt.
+   - **Chỉnh điểm chạm/vuốt trên màn hình**: mở lớp phủ hiện các thao tác đã có dưới dạng số 1, 2, 3… (xanh dương = chạm, cam = chạm giữ, xanh lá = vuốt kèm mũi tên). **Giữ ngón tay ~0,5 giây** ở chỗ trống để thêm điểm mới; **chạm vào số** để đổi kiểu, thời gian, số lần, thời gian nghỉ hoặc xoá; **kéo** để dời vị trí (vuốt có thêm đầu kéo ở điểm cuối). Bấm *Xong* để ghi vào macro.
    - Bấm **Thử luật** để kiểm tra khớp hay không (chưa chạy macro), rồi **Lưu**.
 3. Ở màn hình chính bật **Bật theo dõi**. Dừng bằng công tắc hoặc nút "Dừng hẳn" ở thông báo.
 4. **Nút nổi** (hiện sau khi cấp quyền chụp màn hình, tắt/bật bằng công tắc "Hiện nút nổi"): kéo để di chuyển, chạm để mở bảng nhanh gồm công tắc **Theo dõi**, danh sách luật để bật/tắt từng luật, **+ Luật** (thêm luật mới), **Mở app**, **Ẩn nút**. Nút xanh = đang theo dõi, xám = đang tắt. Nút tự ẩn khi bạn đang khoanh vùng/ảnh mẫu.
+5. **Chạy tuần tự** (công tắc ở màn hình chính): các luật đang bật chạy lần lượt theo thứ tự trong danh sách (đổi thứ tự bằng nút ▲ ▼). Mỗi bước chờ luật khớp rồi chạy macro, hết luật thì tính là xong 1 vòng và lặp lại theo **Số vòng** (1 = chỉ 1 lần, 0 = lặp mãi); đủ số vòng thì tự dừng theo dõi. Tiến độ hiện ở màn hình chính và trong bảng của nút nổi.
+6. **Hiệu ứng chạm/vuốt**: khi macro chạy, vị trí chạm/vuốt hiện trên màn hình (vòng tròn, đường vuốt, số lần "2/5"). Tắt bằng công tắc tương ứng nếu hiệu ứng che vùng đang quét.
 
 ## Lưu ý
 - Android 14+ hỏi lại quyền chụp màn hình mỗi lần khởi động dịch vụ.

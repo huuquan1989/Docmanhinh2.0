@@ -121,7 +121,8 @@ class RuleEditActivity : Activity() {
                 "wait ms  |  back  |  home  |  recents\n" +
                 "# ghi chú"
         })
-        root.addView(btn("Thêm thao tác (chạm / giữ / vuốt) lên màn hình") { actionDialog() })
+        root.addView(btn("Chỉnh điểm chạm/vuốt trên màn hình (giữ để thêm 1, 2, 3…)") { pick("ACTIONS") })
+        root.addView(btn("Thêm nhanh 1 thao tác bằng hộp thoại") { actionDialog() })
 
         root.addView(label("Sau khi chạy hết thao tác, lặp lại tổng cộng (lần). 1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi"))
         repeatEt = EditText(this).apply {
