@@ -63,7 +63,7 @@ class FloatingButton(
 
     init {
         bubble.apply {
-            text = "SW"; textSize = 14f; setTextColor(Color.WHITE); isFakeBoldText = true
+            text = "SW"; textSize = 14f; setTextColor(Color.WHITE); typeface = android.graphics.Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(dp(BUBBLE), dp(BUBBLE))
             setOnTouchListener(DragListener())
