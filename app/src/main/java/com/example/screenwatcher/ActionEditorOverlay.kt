@@ -21,6 +21,7 @@ import android.widget.Toast
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.sin
 
 /**
@@ -178,7 +179,7 @@ class ActionEditorOverlay(
         setTextColor(Color.WHITE)
         gravity = Gravity.CENTER
         textSize = 15f
-        setPadding(dp(14), dp(10), dp(14), dp(10))
+        setPadding(dp(12), dp(6), dp(12), dp(6))
         background = GradientDrawable().apply {
             setColor(if (selected) 0xFF1976D2.toInt() else 0x44FFFFFF)
             cornerRadius = dpf(8)
@@ -269,6 +270,12 @@ class ActionEditorOverlay(
             )
         }
         panel.addView(
+            stepper("Chờ rồi sang điểm kế (ms)", a.wait, { v -> if (v < 1000) 50L else 100L }, 0L, 600_000L) { a.wait = it },
+        )
+        panel.addView(
+            stepper("Kích thước nút (dp)", a.size.toLong(), { _ -> 4L }, 24L, 120L) { a.size = it.toInt() },
+        )
+        panel.addView(
             chip("🗑 Xoá điểm này", false) { acts.remove(a); sel = null; refreshPanel() },
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .apply { topMargin = dp(4) },
@@ -337,7 +344,7 @@ class ActionEditorOverlay(
             val col = colorOf(a.kind)
             val x1 = a.x1.toFloat()
             val y1 = a.y1.toFloat()
-            val r = dpf(22)
+            val r = dpf(a.size) / 2f
             if (a.kind == "swipe") {
                 val x2 = a.x2.toFloat()
                 val y2 = a.y2.toFloat()
@@ -347,11 +354,11 @@ class ActionEditorOverlay(
                 for (s in doubleArrayOf(2.6, -2.6)) {
                     c.drawLine(
                         x2, y2,
-                        x2 + (dpf(22) * cos(ang + s)).toFloat(), y2 + (dpf(22) * sin(ang + s)).toFloat(), ring,
+                        x2 + (r * 1.4f * cos(ang + s)).toFloat(), y2 + (r * 1.4f * sin(ang + s)).toFloat(), ring,
                     )
                 }
                 fillP.color = col; fillP.alpha = 230
-                c.drawCircle(x2, y2, dpf(13), fillP)
+                c.drawCircle(x2, y2, r * 0.6f, fillP)
             }
             fillP.color = col; fillP.alpha = 215
             c.drawCircle(x1, y1, r, fillP)
@@ -363,16 +370,17 @@ class ActionEditorOverlay(
                 ring.color = Color.WHITE; ring.strokeWidth = dpf(3)
                 c.drawCircle(x1, y1, r + dpf(13), ring)
             }
-            txt.textSize = dpf(18)
+            txt.textSize = r * 0.8f
             c.drawText(no.toString(), x1, y1 + txt.textSize / 3, txt)
             small.textSize = dpf(12)
-            val info = if (a.times > 1) "${a.ms}ms ×${a.times}" else "${a.ms}ms"
+            val info = (if (a.times > 1) "${a.ms}ms ×${a.times}" else "${a.ms}ms") +
+                (if (a.wait != 120L) " ⏱${a.wait}" else "")
             c.drawText(info, x1, y1 + r + dpf(18), small)
         }
 
         private fun hitTest(x: Float, y: Float): Pair<TouchAct, Boolean>? {
-            val rad = dpf(30)
             for (a in acts.asReversed()) {
+                val rad = max(dpf(30), dpf(a.size) / 2f + dpf(6))
                 if (a.kind == "swipe" && hypot(x - a.x2, y - a.y2) < rad) return a to true
                 if (hypot(x - a.x1, y - a.y1) < rad) return a to false
             }

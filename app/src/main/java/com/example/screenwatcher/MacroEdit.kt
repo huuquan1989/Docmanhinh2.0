@@ -10,10 +10,12 @@ class TouchAct(
     var ms: Long = MacroEdit.defaultMs(kind),
     var times: Int = 1,
     var gap: Long = 150L,
+    var wait: Long = 120L,     // chờ bao lâu sau khi xong điểm này rồi mới sang điểm kế (ms)
+    var size: Int = 44,        // kích thước nút trên màn hình (dp)
     val line: Int = -1,        // chỉ số dòng gốc trong macro (-1 = thao tác mới)
 ) {
     fun toLine(): String =
-        (if (kind == "swipe") "swipe $x1 $y1 $x2 $y2 $ms" else "$kind $x1 $y1 $ms") + Macro.suffix(times, gap)
+        (if (kind == "swipe") "swipe $x1 $y1 $x2 $y2 $ms" else "$kind $x1 $y1 $ms") + Macro.suffix(times, gap, wait, size)
 
     /** Nội dung lúc mới đọc, để biết thao tác có bị sửa hay không. */
     val sig: String = toLine()
@@ -41,13 +43,15 @@ object MacroEdit {
             val times = (opts["times"]?.toIntOrNull() ?: 1).coerceIn(1, 100_000)
             val gap = (opts["gap"]?.toLongOrNull() ?: 150L).coerceAtLeast(0)
             val ms = opts["ms"]?.toLongOrNull()
+            val wait = (opts["wait"]?.toLongOrNull() ?: 120L).coerceAtLeast(0)
+            val size = (opts["size"]?.toIntOrNull() ?: 44).coerceIn(16, 200)
             val k = p[0].lowercase()
             if ((k == "tap" || k == "longtap") && a.size >= 2) {
                 out.add(
                     TouchAct(
                         k, a[0].toInt(), a[1].toInt(),
                         ms = a.getOrNull(2)?.toLong() ?: ms ?: defaultMs(k),
-                        times = times, gap = gap, line = idx,
+                        times = times, gap = gap, wait = wait, size = size, line = idx,
                     ),
                 )
             } else if (k == "swipe" && a.size >= 4) {
@@ -55,7 +59,7 @@ object MacroEdit {
                     TouchAct(
                         "swipe", a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(),
                         ms = a.getOrNull(4)?.toLong() ?: ms ?: defaultMs("swipe"),
-                        times = times, gap = gap, line = idx,
+                        times = times, gap = gap, wait = wait, size = size, line = idx,
                     ),
                 )
             }

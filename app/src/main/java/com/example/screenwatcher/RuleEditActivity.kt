@@ -118,6 +118,7 @@ class RuleEditActivity : Activity() {
                 "tap x y [ms]  |  longtap x y [ms]\n" +
                 "swipe x1 y1 x2 y2 [ms]\n" +
                 "Thêm  times=N gap=ms  vào cuối dòng chạm/giữ/vuốt để lặp N lần\n" +
+                "  wait=ms: chờ sau khi xong dòng (mặc định 120)  size=dp: cỡ nút\n" +
                 "wait ms  |  back  |  home  |  recents\n" +
                 "# ghi chú"
         })
