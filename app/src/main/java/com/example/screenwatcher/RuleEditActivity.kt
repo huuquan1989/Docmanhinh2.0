@@ -1,7 +1,6 @@
 package com.example.screenwatcher
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -118,12 +117,11 @@ class RuleEditActivity : Activity() {
                 "tap x y [ms]  |  longtap x y [ms]\n" +
                 "swipe x1 y1 x2 y2 [ms]\n" +
                 "Thêm  times=N gap=ms  vào cuối dòng chạm/giữ/vuốt để lặp N lần\n" +
-                "  wait=ms: chờ sau khi xong dòng (mặc định 120)  size=dp: cỡ nút\n" +
+                "  wait=ms: chờ rồi mới chạm (mặc định 120)  size=dp: cỡ nút\n" +
                 "wait ms  |  back  |  home  |  recents\n" +
                 "# ghi chú"
         })
         root.addView(btn("Chỉnh điểm chạm/vuốt trên màn hình (giữ để thêm 1, 2, 3…)") { pick("ACTIONS") })
-        root.addView(btn("Thêm nhanh 1 thao tác bằng hộp thoại") { actionDialog() })
 
         root.addView(label("Sau khi chạy hết thao tác, lặp lại tổng cộng (lần). 1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi"))
         repeatEt = EditText(this).apply {
@@ -160,55 +158,6 @@ class RuleEditActivity : Activity() {
         toggleGroups()
         refreshRegions()
         refreshTemplate()
-    }
-
-    /** Hộp thoại chọn kiểu thao tác (chạm / chạm giữ / vuốt), thời gian và số lần, rồi chọn vị trí trên màn hình. */
-    private fun actionDialog() {
-        val kinds = listOf("tap", "longtap", "swipe")
-        val defMs = listOf("60", "800", "300")
-        val msLabels = listOf("Thời gian chạm (ms)", "Thời gian giữ (ms)", "Thời gian vuốt (ms)")
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0)
-        }
-        val kind = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@RuleEditActivity, android.R.layout.simple_spinner_dropdown_item,
-                listOf("Chạm", "Chạm và giữ", "Vuốt"),
-            )
-        }
-        val msLabel = label(msLabels[0])
-        val ms = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText(defMs[0]) }
-        val times = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText("1") }
-        val gap = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText("150") }
-        kind.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                msLabel.text = msLabels[pos]; ms.setText(defMs[pos])
-            }
-            override fun onNothingSelected(p: AdapterView<*>?) {}
-        }
-        box.addView(label("Kiểu thao tác"))
-        box.addView(kind)
-        box.addView(msLabel)
-        box.addView(ms)
-        box.addView(label("Số lần chạm / vuốt"))
-        box.addView(times)
-        box.addView(label("Nghỉ giữa các lần (ms)"))
-        box.addView(gap)
-
-        AlertDialog.Builder(this)
-            .setTitle("Thêm thao tác")
-            .setView(ScrollView(this).apply { addView(box) })
-            .setPositiveButton("Chọn trên màn hình") { _, _ ->
-                val k = kind.selectedItemPosition
-                val d = (ms.text.toString().toLongOrNull() ?: defMs[k].toLong()).coerceIn(1L, 60_000L)
-                val n = (times.text.toString().toIntOrNull() ?: 1).coerceIn(1, 100_000)
-                val g = (gap.text.toString().toLongOrNull() ?: 150L).coerceAtLeast(0L)
-                pick(if (k == 2) "SWIPE" else "POINT") {
-                    putExtra("kind", kinds[k]); putExtra("ms", d); putExtra("times", n); putExtra("gap", g)
-                }
-            }
-            .setNegativeButton("Huỷ", null)
-            .show()
     }
 
     private fun toggleGroups() {

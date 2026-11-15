@@ -150,7 +150,7 @@ private class FlashView(
  *   back | home | recents         phím hệ thống
  *   # ghi chú
  * Các lệnh chạm/giữ/vuốt có thể thêm  times=N  (số lần lặp) và  gap=ms  (nghỉ giữa các lần, mặc định 150).
- *   wait=ms  chờ bấy nhiêu ms sau khi xong dòng này rồi mới sang dòng kế (mặc định 120).
+ *   wait=ms  chờ bấy nhiêu ms TRƯỚC khi thực hiện dòng này, rồi mới chạm (mặc định 120).
  *   size=dp  kích thước nút hiển thị của điểm chạm (mặc định 44, chỉ để quan sát).
  *   vd: swipe 540 1600 540 600 300 times=5 gap=400
  */
@@ -201,8 +201,10 @@ object Macro {
             val times = (opts["times"]?.toIntOrNull() ?: 1).coerceIn(1, 100_000)
             val gap = (opts["gap"]?.toLongOrNull() ?: 150L).coerceAtLeast(0)
             val ms = opts["ms"]?.toLongOrNull()
-            val waitAfter = (opts["wait"]?.toLongOrNull() ?: 120L).coerceAtLeast(0)
+            val waitBefore = (opts["wait"]?.toLongOrNull() ?: 120L).coerceAtLeast(0)
             val sizeDp = (opts["size"]?.toIntOrNull() ?: 44).coerceIn(16, 200)
+            if (waitBefore > 0) delay(waitBefore) // chờ rồi mới chạm
+            if (!AppState.monitoring) return
             when (p[0].lowercase()) {
                 "tap_match" -> repeatAction(times, gap) { i ->
                     val x = mx + (a.getOrNull(0) ?: 0f)
@@ -232,7 +234,6 @@ object Macro {
                 "recents" -> svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)
                 else -> AppState.log("⚠ Lệnh macro không hợp lệ: $line")
             }
-            delay(waitAfter)
         }
     }
 }

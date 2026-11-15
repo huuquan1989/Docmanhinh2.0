@@ -10,7 +10,7 @@ class TouchAct(
     var ms: Long = MacroEdit.defaultMs(kind),
     var times: Int = 1,
     var gap: Long = 150L,
-    var wait: Long = 120L,     // chờ bao lâu sau khi xong điểm này rồi mới sang điểm kế (ms)
+    var wait: Long = 120L,     // chờ bao lâu (ms) rồi mới chạm điểm này
     var size: Int = 44,        // kích thước nút trên màn hình (dp)
     val line: Int = -1,        // chỉ số dòng gốc trong macro (-1 = thao tác mới)
 ) {

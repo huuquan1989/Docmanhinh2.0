@@ -270,7 +270,7 @@ class ActionEditorOverlay(
             )
         }
         panel.addView(
-            stepper("Chờ rồi sang điểm kế (ms)", a.wait, { v -> if (v < 1000) 50L else 100L }, 0L, 600_000L) { a.wait = it },
+            stepper("Chờ rồi chạm (ms)", a.wait, { v -> if (v < 1000) 50L else 100L }, 0L, 600_000L) { a.wait = it },
         )
         panel.addView(
             stepper("Kích thước nút (dp)", a.size.toLong(), { _ -> 4L }, 24L, 120L) { a.size = it.toInt() },

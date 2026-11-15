@@ -17,6 +17,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -71,8 +72,8 @@ class SelectorOverlay(
     fun show() {
         val hint = TextView(ctx).apply {
             text = when (mode) {
-                "REGIONS" -> "Kéo để chọn vùng (có thể chọn nhiều vùng)"
-                "TEMPLATE" -> "Kéo để khoanh đúng hình cần nhận diện"
+                "REGIONS" -> "Kéo để chọn vùng (nhiều vùng). Kéo cạnh/góc để chỉnh, kéo bên trong để dời"
+                "TEMPLATE" -> "Kéo để khoanh hình cần nhận diện. Kéo cạnh/góc để chỉnh, kéo bên trong để dời"
                 "SWIPE" -> "Kéo từ điểm bắt đầu đến điểm kết thúc của cú vuốt"
                 else -> "Chạm vào vị trí cần tự động chạm"
             }
@@ -141,6 +142,57 @@ class SelectorOverlay(
         private var sx = 0
         private var sy = 0
 
+        // Chỉnh vùng đã vẽ: bit 1 = cạnh trái, 2 = trên, 4 = phải, 8 = dưới, 16 = dời cả vùng
+        private var dragIdx = -1
+        private var dragMask = 0
+        private var dragX = 0
+        private var dragY = 0
+        private var startRegion: Region? = null
+
+        private fun hitRegion(x: Int, y: Int): Pair<Int, Int>? {
+            val tol = (28 * resources.displayMetrics.density).toInt()
+            for (i in rects.indices.reversed()) {
+                val r = rects[i]
+                if (x < r.l - tol || x > r.r + tol || y < r.t - tol || y > r.b + tol) continue
+                var mask = 0
+                val dl = abs(x - r.l)
+                val dr = abs(x - r.r)
+                val dt = abs(y - r.t)
+                val db = abs(y - r.b)
+                if (dl <= tol || dr <= tol) mask = mask or (if (dl <= dr) 1 else 4)
+                if (dt <= tol || db <= tol) mask = mask or (if (dt <= db) 2 else 8)
+                if (mask != 0) return i to mask
+                if (x >= r.l && x <= r.r && y >= r.t && y <= r.b) return i to 16
+            }
+            return null
+        }
+
+        private fun applyDrag(x: Int, y: Int) {
+            val s = startRegion ?: return
+            if (dragIdx < 0 || dragIdx >= rects.size) return
+            val dx = x - dragX
+            val dy = y - dragY
+            val minSz = (24 * resources.displayMetrics.density).toInt()
+            val mw = min(minSz, s.w)
+            val mh = min(minSz, s.h)
+            var l = s.l
+            var t = s.t
+            var r = s.r
+            var b = s.b
+            if (dragMask == 16) {
+                l = (s.l + dx).coerceIn(0, max(0, width - s.w))
+                t = (s.t + dy).coerceIn(0, max(0, height - s.h))
+                r = l + s.w
+                b = t + s.h
+            } else {
+                if ((dragMask and 1) != 0) l = (s.l + dx).coerceIn(0, max(0, s.r - mw))
+                if ((dragMask and 4) != 0) r = (s.r + dx).coerceIn(min(s.l + mw, width), width)
+                if ((dragMask and 2) != 0) t = (s.t + dy).coerceIn(0, max(0, s.b - mh))
+                if ((dragMask and 8) != 0) b = (s.b + dy).coerceIn(min(s.t + mh, height), height)
+            }
+            rects[dragIdx] = Region(l, t, r, b)
+        }
+
         override fun onDraw(c: Canvas) {
             getLocationOnScreen(loc)
             c.drawColor(0x44000000)
@@ -151,6 +203,18 @@ class SelectorOverlay(
                 c.drawRect(rf, fill)
                 c.drawRect(rf, stroke)
                 c.drawText("${i + 1}", r.l + 10f, r.t + 44f, txt)
+                if (i < rects.size) {
+                    // chấm điều khiển ở 4 góc và giữa 4 cạnh
+                    val hr = 7 * resources.displayMetrics.density
+                    val cx = (rf.left + rf.right) / 2
+                    val cy = (rf.top + rf.bottom) / 2
+                    for (hx in floatArrayOf(rf.left, cx, rf.right)) {
+                        for (hy in floatArrayOf(rf.top, cy, rf.bottom)) {
+                            if (hx == cx && hy == cy) continue
+                            c.drawCircle(hx, hy, hr, solid)
+                        }
+                    }
+                }
             }
             point?.let {
                 c.drawCircle(it.x.toFloat(), it.y.toFloat(), 36f, stroke)
@@ -192,13 +256,33 @@ class SelectorOverlay(
                     }
                 }
                 else -> when (e.action) {
-                    MotionEvent.ACTION_DOWN -> { sx = x; sy = y; cur = null }
-                    MotionEvent.ACTION_MOVE -> cur = Region(min(sx, x), min(sy, y), max(sx, x), max(sy, y))
+                    MotionEvent.ACTION_DOWN -> {
+                        cur = null
+                        val hit = hitRegion(x, y)
+                        if (hit != null) {
+                            // chạm vào cạnh / góc / bên trong vùng đã vẽ: chỉnh hoặc dời vùng đó
+                            dragIdx = hit.first; dragMask = hit.second
+                            startRegion = rects[hit.first]
+                            dragX = x; dragY = y
+                        } else {
+                            dragIdx = -1; sx = x; sy = y
+                        }
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (dragIdx >= 0) applyDrag(x, y)
+                        else cur = Region(min(sx, x), min(sy, y), max(sx, x), max(sy, y))
+                    }
                     MotionEvent.ACTION_UP -> {
-                        cur?.let {
-                            if (it.w > 20 && it.h > 20) {
-                                if (mode == "TEMPLATE") rects.clear()
-                                rects.add(it)
+                        if (dragIdx >= 0) {
+                            applyDrag(x, y)
+                            dragIdx = -1
+                            startRegion = null
+                        } else {
+                            cur?.let {
+                                if (it.w > 20 && it.h > 20) {
+                                    if (mode == "TEMPLATE") rects.clear()
+                                    rects.add(it)
+                                }
                             }
                         }
                         cur = null
