@@ -64,6 +64,8 @@ class CaptureService : Service() {
     private var fab: FloatingButton? = null
     private var loop: Job? = null
     private val lastFire = HashMap<String, Long>()
+    /** Mốc gốc của các luật kiểu "thay đổi" (chụp khi luật bắt đầu được theo dõi, xoá sau mỗi lần chạy macro). */
+    private val baselines = java.util.concurrent.ConcurrentHashMap<String, ChangeMatcher.Base>()
     private var editor: ActionEditorOverlay? = null
     private var seqIndex = 0
     private var seqCycle = 0
@@ -91,7 +93,7 @@ class CaptureService : Service() {
     private fun setMonitoring(on: Boolean) {
         val was = AppState.monitoring
         AppState.monitoring = on && projection != null
-        if (AppState.monitoring && !was) { seqIndex = 0; seqCycle = 0; seqLogged = -1 }
+        if (AppState.monitoring && !was) { seqIndex = 0; seqCycle = 0; seqLogged = -1; baselines.clear() }
         if (!AppState.monitoring) AppState.seqStatus = ""
         getSystemService(NotificationManager::class.java).notify(1, notif())
         AppState.log(if (AppState.monitoring) "▶ Bắt đầu theo dõi" else "⏸ Dừng theo dõi")
@@ -106,6 +108,7 @@ class CaptureService : Service() {
             return
         }
         lastFire.clear()
+        baselines.clear()
         AppState.log("📂 Đã nạp bộ luật '$name'")
         if (AppState.monitoring) setMonitoring(false) // dừng vòng cũ để chạy lại từ đầu
         if (run) {
@@ -241,8 +244,9 @@ class CaptureService : Service() {
             if (now - (lastFire[rule.id] ?: -1_000_000L) < rule.cooldownMs) continue
             val hit = safeEval(rule, frame) ?: continue
             lastFire[rule.id] = SystemClock.elapsedRealtime()
-            AppState.log("✔ '${rule.name}' khớp (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}")
+            AppState.log("✔ '${rule.name}' ${hitText(rule, hit)}")
             Macro.runRule(rule, hit.x, hit.y)
+            baselines.clear() // macro làm đổi màn hình -> các luật "thay đổi" chụp lại mốc gốc
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             break // chụp lại khung mới rồi mới xét tiếp
         }
@@ -265,8 +269,9 @@ class CaptureService : Service() {
             AppState.log("⏳ Chờ luật ${seqIndex + 1}/${rules.size}: '${rule.name}'")
         }
         val hit = safeEval(rule, frame) ?: return
-        AppState.log("✔ [${seqIndex + 1}/${rules.size}] '${rule.name}' khớp (${"%.2f".format(hit.score)}) tại ${hit.x},${hit.y}")
+        AppState.log("✔ [${seqIndex + 1}/${rules.size}] '${rule.name}' ${hitText(rule, hit)}")
         Macro.runRule(rule, hit.x, hit.y)
+        baselines.clear()
         if (!AppState.monitoring) return
         seqIndex++
         seqLogged = -1
@@ -282,8 +287,11 @@ class CaptureService : Service() {
         }
     }
 
-    private suspend fun safeEval(rule: Rule, frame: Bitmap): Hit? = try {
-        evaluate(rule, frame)
+    private suspend fun safeEval(
+        rule: Rule, frame: Bitmap,
+        bases: MutableMap<String, ChangeMatcher.Base> = baselines,
+    ): Hit? = try {
+        evaluate(rule, frame, bases)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -291,7 +299,30 @@ class CaptureService : Service() {
         null
     }
 
-    private suspend fun evaluate(rule: Rule, frame: Bitmap): Hit? {
+    private fun hitText(rule: Rule, hit: Hit): String =
+        if (rule.type == Rule.CHANGE) "CÓ THAY ĐỔI ${"%.0f".format(hit.score * 100)}% tại ${hit.x},${hit.y}"
+        else "KHỚP (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}"
+
+    private fun missText(rule: Rule) = if (rule.type == Rule.CHANGE) "không thấy thay đổi" else "không khớp"
+
+    /** Thử luật "thay đổi": chụp mốc gốc, chờ [waitMs] để người dùng làm vùng đó đổi, rồi so sánh. */
+    private suspend fun probeChange(rule: Rule, waitMs: Long): Pair<Bitmap?, Hit?> {
+        val tmp = java.util.concurrent.ConcurrentHashMap<String, ChangeMatcher.Base>()
+        val f0 = grab() ?: return null to null
+        safeEval(rule, f0, tmp)
+        main.post {
+            Toast.makeText(
+                this, "Đã chụp mốc gốc '${rule.name}'. Hãy làm vùng đó thay đổi trong ${waitMs / 1000} giây…",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        delay(waitMs)
+        val f1 = grab() ?: return null to null
+        return f1 to safeEval(rule, f1, tmp)
+    }
+
+    private suspend fun evaluate(rule: Rule, frame: Bitmap, bases: MutableMap<String, ChangeMatcher.Base>): Hit? {
+        if (rule.type == Rule.CHANGE) return ChangeMatcher.detect(rule, frame, bases)
         val regs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
         val tpl: Bitmap? = if (rule.type == Rule.IMAGE) {
             BitmapFactory.decodeFile(RuleStore.templateFile(this, rule.id).path) ?: return null
@@ -319,12 +350,19 @@ class CaptureService : Service() {
         fab?.hide()
         scope.launch {
             delay(800)
-            val frame = grab()
-            val hit = if (frame == null) null else safeEval(rule, frame)
+            val frame: Bitmap?
+            val hit: Hit?
+            if (rule.type == Rule.CHANGE) {
+                val p = probeChange(rule, 4000)
+                frame = p.first; hit = p.second
+            } else {
+                frame = grab()
+                hit = if (frame == null) null else safeEval(rule, frame)
+            }
             val msg = when {
                 frame == null -> "Chưa có khung hình"
-                hit != null -> "KHỚP (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}"
-                else -> "không khớp"
+                hit != null -> hitText(rule, hit)
+                else -> missText(rule)
             }
             AppState.log("Thử nhanh '${rule.name}': $msg")
             main.post {
@@ -344,10 +382,19 @@ class CaptureService : Service() {
         val rule = RuleStore.get(this, id) ?: return
         scope.launch {
             delay(4000) // thời gian để người dùng chuyển sang màn hình cần kiểm tra
-            val frame = grab()
-            val msg = if (frame == null) "Chưa có khung hình" else {
-                val hit = safeEval(rule, frame)
-                if (hit != null) "KHỚP (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}" else "không khớp"
+            val frame: Bitmap?
+            val hit: Hit?
+            if (rule.type == Rule.CHANGE) {
+                val p = probeChange(rule, 5000)
+                frame = p.first; hit = p.second
+            } else {
+                frame = grab()
+                hit = if (frame == null) null else safeEval(rule, frame)
+            }
+            val msg = when {
+                frame == null -> "Chưa có khung hình"
+                hit != null -> hitText(rule, hit)
+                else -> missText(rule)
             }
             AppState.log("Thử '${rule.name}': $msg")
             main.post { Toast.makeText(this@CaptureService, "Thử '${rule.name}': $msg", Toast.LENGTH_LONG).show() }

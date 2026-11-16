@@ -60,6 +60,9 @@ object TextMatcher {
             .addOnFailureListener { c.resumeWithException(it) }
     }
 
+    /** Đọc toàn bộ chữ trong ảnh, đã chuẩn hoá (dùng cho so sánh thay đổi). */
+    suspend fun readNorm(bmp: Bitmap): String = norm(recognize(bmp).text)
+
     /** rule.text có thể chứa nhiều lựa chọn, ngăn cách bằng dấu | (khớp 1 trong số đó là đủ). */
     suspend fun find(bmp: Bitmap, rule: Rule): Hit? {
         val pats = rule.text.split("|").map { norm(it) }.filter { it.isNotEmpty() }

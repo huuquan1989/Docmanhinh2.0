@@ -35,17 +35,26 @@ data class Rule(
     /** Sau khi chạy hết macro: lặp lại tổng cộng bấy nhiêu lần (1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi). */
     var repeatCount: Int = 1,
     var repeatDelayMs: Long = 500,
+    /** Kiểu CHANGE: so sánh bằng hình (CH_IMAGE) hay bằng chữ OCR (CH_TEXT). */
+    var changeMode: String = CH_IMAGE,
+    /** Kiểu CHANGE: vùng khác so với lúc đầu từ mức này (0.01..1.0) trở lên thì tính là có thay đổi. */
+    var diffThreshold: Double = 0.10,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("type", type).put("text", text)
         .put("fuzzy", fuzzy).put("threshold", threshold).put("macro", macro)
         .put("cooldownMs", cooldownMs).put("enabled", enabled)
         .put("repeatCount", repeatCount).put("repeatDelayMs", repeatDelayMs)
+        .put("changeMode", changeMode).put("diffThreshold", diffThreshold)
         .put("regions", JSONArray().also { a -> regions.forEach { a.put(it.toJson()) } })
 
     companion object {
         const val TEXT = "TEXT"
         const val IMAGE = "IMAGE"
+        /** Phát hiện sự thay đổi của một vùng so với lúc ban đầu. */
+        const val CHANGE = "CHANGE"
+        const val CH_IMAGE = "IMAGE"
+        const val CH_TEXT = "TEXT"
 
         fun from(o: JSONObject): Rule {
             val regs = mutableListOf<Region>()
@@ -64,6 +73,8 @@ data class Rule(
                 enabled = o.optBoolean("enabled", true),
                 repeatCount = o.optInt("repeatCount", 1),
                 repeatDelayMs = o.optLong("repeatDelayMs", 500),
+                changeMode = o.optString("changeMode", CH_IMAGE),
+                diffThreshold = o.optDouble("diffThreshold", 0.10),
             )
         }
     }

@@ -401,7 +401,12 @@ class MainActivity : ComponentActivity() {
             head.addView(smallBtn("▲") { move(idx, -1) })
             head.addView(smallBtn("▼") { move(idx, 1) })
             row.addView(head)
-            val what = if (r.type == Rule.TEXT) "Chữ: \"${r.text}\"" else "Hình ảnh mẫu"
+            val what = when (r.type) {
+                Rule.TEXT -> "Chữ: \"${r.text}\""
+                Rule.CHANGE -> "Thay đổi " + (if (r.changeMode == Rule.CH_TEXT) "chữ" else "hình") +
+                    " ≥ ${"%.0f".format(r.diffThreshold * 100)}%"
+                else -> "Hình ảnh mẫu"
+            }
             val where = if (r.regions.isEmpty()) "toàn màn hình" else "${r.regions.size} vùng"
             row.addView(TextView(this).apply {
                 text = "$what • $where • ${r.macro.lines().count { it.isNotBlank() }} bước • chạm để sửa"

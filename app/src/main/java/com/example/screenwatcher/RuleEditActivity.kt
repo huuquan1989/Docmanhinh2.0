@@ -36,6 +36,10 @@ class RuleEditActivity : Activity() {
     private lateinit var repeatDelayEt: EditText
     private lateinit var textGroup: LinearLayout
     private lateinit var imageGroup: LinearLayout
+    private lateinit var changeGroup: LinearLayout
+    private lateinit var thrGroup: LinearLayout
+    private lateinit var changeMode: Spinner
+    private lateinit var diffThr: EditText
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -65,9 +69,9 @@ class RuleEditActivity : Activity() {
         type = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@RuleEditActivity, android.R.layout.simple_spinner_dropdown_item,
-                listOf("Chữ (OCR)", "Hình ảnh (mẫu)"),
+                listOf("Chữ (OCR)", "Hình ảnh (mẫu)", "Phát hiện thay đổi (so với ban đầu)"),
             )
-            setSelection(if (rule.type == Rule.TEXT) 0 else 1)
+            setSelection(when (rule.type) { Rule.TEXT -> 0; Rule.IMAGE -> 1; else -> 2 })
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = toggleGroups()
                 override fun onNothingSelected(p: AdapterView<*>?) {}
@@ -92,12 +96,39 @@ class RuleEditActivity : Activity() {
         imageGroup.addView(btn("Chọn ảnh mẫu trên màn hình") { pick("TEMPLATE") })
         root.addView(imageGroup)
 
-        root.addView(label("Ngưỡng giống nhau (0.50 – 0.99)"))
+        // --- nhóm THAY ĐỔI ---
+        changeGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        changeGroup.addView(label("So sánh bằng"))
+        changeMode = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@RuleEditActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf("Hình ảnh (điểm ảnh của vùng đổi)", "Chữ (nội dung OCR của vùng đổi)"),
+            )
+            setSelection(if (rule.changeMode == Rule.CH_TEXT) 1 else 0)
+        }
+        changeGroup.addView(changeMode)
+        changeGroup.addView(label("Ngưỡng thay đổi (0.01 – 1.00): vùng khác lúc đầu từ mức này trở lên thì chạy macro"))
+        diffThr = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(rule.diffThreshold.toString())
+        }
+        changeGroup.addView(diffThr)
+        changeGroup.addView(TextView(this).apply {
+            textSize = 11f
+            text = "Hình: tỉ lệ điểm ảnh khác. Chữ: tỉ lệ ký tự khác. VD 0.10 = khác 10%; nhỏ hơn = nhạy hơn.\n" +
+                "Mốc ban đầu được chụp tự động khi bắt đầu theo dõi (chế độ tuần tự: khi tới lượt luật này). " +
+                "Sau mỗi lần chạy macro, mốc được chụp lại. Nên chọn vùng nhỏ cần theo dõi ở bên dưới."
+        })
+        root.addView(changeGroup)
+
+        thrGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        thrGroup.addView(label("Ngưỡng giống nhau (0.50 – 0.99)"))
         thr = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             setText(rule.threshold.toString())
         }
-        root.addView(thr)
+        thrGroup.addView(thr)
+        root.addView(thrGroup)
 
         root.addView(label("Vùng quét (để trống = toàn màn hình)"))
         regionsTv = TextView(this)
@@ -105,7 +136,7 @@ class RuleEditActivity : Activity() {
         root.addView(btn("Chọn vùng trên màn hình (thêm được nhiều vùng)") { pick("REGIONS") })
         root.addView(btn("Xoá hết vùng") { rule.regions.clear(); refreshRegions() })
 
-        root.addView(label("Macro khi khớp (mỗi dòng 1 lệnh)"))
+        root.addView(label("Macro khi khớp / khi có thay đổi (mỗi dòng 1 lệnh)"))
         macro = EditText(this).apply {
             setText(rule.macro); minLines = 3; gravity = android.view.Gravity.TOP
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -161,9 +192,11 @@ class RuleEditActivity : Activity() {
     }
 
     private fun toggleGroups() {
-        val isText = type.selectedItemPosition == 0
-        textGroup.visibility = if (isText) View.VISIBLE else View.GONE
-        imageGroup.visibility = if (isText) View.GONE else View.VISIBLE
+        val pos = type.selectedItemPosition
+        textGroup.visibility = if (pos == 0) View.VISIBLE else View.GONE
+        imageGroup.visibility = if (pos == 1) View.VISIBLE else View.GONE
+        changeGroup.visibility = if (pos == 2) View.VISIBLE else View.GONE
+        thrGroup.visibility = if (pos == 2) View.GONE else View.VISIBLE
     }
 
     private fun refreshRegions() {
@@ -178,7 +211,9 @@ class RuleEditActivity : Activity() {
 
     private fun collect() {
         rule.name = name.text.toString().ifBlank { "Luật" }
-        rule.type = if (type.selectedItemPosition == 0) Rule.TEXT else Rule.IMAGE
+        rule.type = when (type.selectedItemPosition) { 0 -> Rule.TEXT; 1 -> Rule.IMAGE; else -> Rule.CHANGE }
+        rule.changeMode = if (changeMode.selectedItemPosition == 1) Rule.CH_TEXT else Rule.CH_IMAGE
+        rule.diffThreshold = (diffThr.text.toString().toDoubleOrNull() ?: 0.10).coerceIn(0.01, 1.0)
         rule.text = text.text.toString()
         rule.fuzzy = fuzzy.isChecked
         rule.threshold = (thr.text.toString().toDoubleOrNull() ?: 0.85).coerceIn(0.5, 0.99)
