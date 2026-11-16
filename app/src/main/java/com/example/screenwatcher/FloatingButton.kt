@@ -6,6 +6,7 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.util.DisplayMetrics
 import android.view.ContextThemeWrapper
 import android.view.Gravity
@@ -33,6 +34,7 @@ class FloatingButton(
     private val onAddRule: () -> Unit,
     private val onOpenApp: () -> Unit,
     private val onHideButton: () -> Unit,
+    private val onTestRule: (String) -> Unit,
 ) {
     private companion object {
         const val BUBBLE = 48   // dp
@@ -230,12 +232,27 @@ class FloatingButton(
             })
         }
         for (r in rules) {
-            list.addView(CheckBox(c).apply {
-                text = r.name; setTextColor(Color.WHITE); isChecked = r.enabled
-                setOnCheckedChangeListener { _, on ->
-                    RuleStore.get(ctx, r.id)?.let { it.enabled = on; RuleStore.upsert(ctx, it) }
-                }
-            })
+            val line = LinearLayout(c).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            line.addView(
+                CheckBox(c).apply {
+                    text = r.name; setTextColor(Color.WHITE); isChecked = r.enabled
+                    isSingleLine = true; ellipsize = TextUtils.TruncateAt.END
+                    setOnCheckedChangeListener { _, on ->
+                        RuleStore.get(ctx, r.id)?.let { it.enabled = on; RuleStore.upsert(ctx, it) }
+                    }
+                },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            // Thử luật nhanh: thu bảng + nút nổi lại, quét ngay rồi báo kết quả
+            line.addView(
+                action("Thử") { onTestRule(r.id) },
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { leftMargin = dp(6) },
+            )
+            list.addView(line)
         }
         panel.addView(
             ScrollView(c).apply { addView(list) },

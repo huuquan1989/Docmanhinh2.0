@@ -109,6 +109,7 @@ class CaptureService : Service() {
             onOpenApp = {
                 startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             },
+            onTestRule = { quickTest(it) },
             onHideButton = {
                 RuleStore.setBubbleOn(this, false)
                 fab?.hide()
@@ -285,6 +286,33 @@ class CaptureService : Service() {
     }
 
     /* ---------------- thử một luật ---------------- */
+
+    /** Thử nhanh một luật từ bảng nút nổi: ẩn bảng + nút, chờ 0,8 giây rồi quét, báo kết quả (chưa chạy macro). */
+    private fun quickTest(id: String) {
+        val rule = RuleStore.get(this, id) ?: return
+        fab?.hide()
+        scope.launch {
+            delay(800)
+            val frame = grab()
+            val hit = if (frame == null) null else safeEval(rule, frame)
+            val msg = when {
+                frame == null -> "Chưa có khung hình"
+                hit != null -> "KHỚP (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}"
+                else -> "không khớp"
+            }
+            AppState.log("Thử nhanh '${rule.name}': $msg")
+            main.post {
+                Toast.makeText(this@CaptureService, "'${rule.name}': $msg", Toast.LENGTH_LONG).show()
+                if (hit != null) {
+                    // vòng tròn đánh dấu chỗ khớp (cần bật Dịch vụ trợ năng và hiệu ứng chạm)
+                    val x = hit.x.toFloat()
+                    val y = hit.y.toFloat()
+                    AutoClickService.instance?.flash("tap", x, y, x, y, 900L, "✔")
+                }
+                showBubble()
+            }
+        }
+    }
 
     private fun test(id: String) {
         val rule = RuleStore.get(this, id) ?: return
