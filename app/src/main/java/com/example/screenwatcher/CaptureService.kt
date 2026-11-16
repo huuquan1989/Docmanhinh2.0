@@ -48,6 +48,7 @@ class CaptureService : Service() {
         const val A_PICK = "sw.pick"
         const val A_TEST = "sw.test"
         const val A_BUBBLE = "sw.bubble"
+        const val A_PROFILE = "sw.profile"
         private const val CH = "sw_capture"
     }
 
@@ -82,6 +83,7 @@ class CaptureService : Service() {
                 i.getIntExtra("times", 1), i.getLongExtra("gap", 150L),
             )
             A_TEST -> test(i.getStringExtra("id") ?: "")
+            A_PROFILE -> loadProfile(i.getStringExtra("id") ?: "", i.getBooleanExtra("run", true))
         }
         return START_NOT_STICKY
     }
@@ -93,6 +95,29 @@ class CaptureService : Service() {
         if (!AppState.monitoring) AppState.seqStatus = ""
         getSystemService(NotificationManager::class.java).notify(1, notif())
         AppState.log(if (AppState.monitoring) "▶ Bắt đầu theo dõi" else "⏸ Dừng theo dõi")
+        fab?.refresh()
+    }
+
+    /** Nạp một bộ luật đã lưu; [run] = true thì chạy theo dõi luôn (bắt đầu lại từ luật đầu). */
+    private fun loadProfile(id: String, run: Boolean) {
+        val name = ProfileStore.list(this).firstOrNull { it.id == id }?.name
+        if (name == null || !ProfileStore.load(this, id)) {
+            Toast.makeText(this, "Không nạp được bộ luật", Toast.LENGTH_LONG).show()
+            return
+        }
+        lastFire.clear()
+        AppState.log("📂 Đã nạp bộ luật '$name'")
+        if (AppState.monitoring) setMonitoring(false) // dừng vòng cũ để chạy lại từ đầu
+        if (run) {
+            if (projection == null) {
+                Toast.makeText(this, "Đã nạp '$name'. Cần cấp quyền chụp màn hình để chạy.", Toast.LENGTH_LONG).show()
+            } else {
+                setMonitoring(true)
+                Toast.makeText(this, "Đang chạy bộ luật '$name'", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(this, "Đã nạp bộ luật '$name'", Toast.LENGTH_SHORT).show()
+        }
         fab?.refresh()
     }
 
@@ -110,6 +135,7 @@ class CaptureService : Service() {
                 startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             },
             onTestRule = { quickTest(it) },
+            onRunProfile = { id -> fab?.collapse(); loadProfile(id, true) },
             onHideButton = {
                 RuleStore.setBubbleOn(this, false)
                 fab?.hide()

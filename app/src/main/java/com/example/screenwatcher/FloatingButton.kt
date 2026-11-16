@@ -25,7 +25,7 @@ import kotlin.math.max
 
 /**
  * Nút nổi kéo thả được. Chạm vào nút để hiện nút Run / Stop bên cạnh (chạy hoặc dừng theo dõi).
- * Giữ nút 1 giây để mở/đóng bảng cài đặt: bật/tắt từng luật, thêm luật mới, mở app, ẩn nút.
+ * Giữ nút 0,5 giây để mở/đóng bảng cài đặt: bật/tắt từng luật, chọn & chạy bộ luật đã lưu, thêm luật mới, mở app, ẩn nút.
  * Màu nút: xanh = đang theo dõi, xám = đang tắt.
  */
 class FloatingButton(
@@ -35,12 +35,14 @@ class FloatingButton(
     private val onOpenApp: () -> Unit,
     private val onHideButton: () -> Unit,
     private val onTestRule: (String) -> Unit,
+    private val onRunProfile: (String) -> Unit,
 ) {
     private companion object {
         const val BUBBLE = 48   // dp
         const val ROW_W = 120   // dp, nút + nút Run/Stop
         const val PANEL_W = 250 // dp
-        const val PANEL_H = 340 // dp, ước lượng chiều cao tối đa của bảng
+        const val PANEL_H = 380 // dp, ước lượng chiều cao tối đa của bảng
+        const val HOLD_MS = 500L // thời gian giữ nút SW để mở bảng
     }
 
     private val c = ContextThemeWrapper(ctx, android.R.style.Theme_DeviceDefault)
@@ -64,6 +66,7 @@ class FloatingButton(
 
     private var added = false
     private var expanded = false
+    private var showProfiles = false
     private val hideRun = Runnable { showRun(false) }
 
     init {
@@ -182,6 +185,7 @@ class FloatingButton(
     fun collapse() {
         if (!expanded) return
         expanded = false
+        showProfiles = false
         panel.visibility = View.GONE
         update()
     }
@@ -197,6 +201,7 @@ class FloatingButton(
 
     private fun toggle() {
         expanded = !expanded
+        showProfiles = false
         if (expanded) {
             buildPanel()
             panel.visibility = View.VISIBLE
@@ -215,8 +220,45 @@ class FloatingButton(
         setOnClickListener { f() }
     }
 
+    /** Danh sách bộ luật đã lưu: chạm một tên để nạp và chạy luôn. */
+    private fun buildProfilePanel() {
+        panel.addView(TextView(c).apply {
+            text = "Bộ luật đã lưu — chạm để nạp & chạy"; setTextColor(0xFFBBBBBB.toInt()); textSize = 12f
+            setPadding(0, 0, 0, dp(4))
+        })
+        val profiles = ProfileStore.list(ctx)
+        val list = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        if (profiles.isEmpty()) {
+            list.addView(TextView(c).apply {
+                text = "(chưa lưu bộ luật nào — lưu trong app)"; setTextColor(0xFFBBBBBB.toInt())
+                setPadding(0, dp(8), 0, dp(8))
+            })
+        }
+        for (p in profiles) {
+            list.addView(
+                action("▶ ${p.name} (${p.ruleCount})") { onRunProfile(p.id) },
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { bottomMargin = dp(4) },
+            )
+        }
+        panel.addView(
+            ScrollView(c).apply { addView(list) },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                if (profiles.size > 5) dp(220) else LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
+        row.addView(
+            action("← Quay lại") { showProfiles = false; buildPanel(); clamp(); update() },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) },
+        )
+        panel.addView(row)
+    }
+
     private fun buildPanel() {
         panel.removeAllViews()
+        if (showProfiles) { buildProfilePanel(); return }
 
         if (AppState.monitoring && AppState.seqStatus.isNotEmpty()) {
             panel.addView(TextView(c).apply {
@@ -262,16 +304,20 @@ class FloatingButton(
             ),
         )
 
-        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
-        fun add(t: String, f: () -> Unit) = row.addView(
+        fun newRow() = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
+        fun LinearLayout.add(t: String, f: () -> Unit) = addView(
             action(t, f),
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) },
         )
-        add("+ Luật") { collapse(); onAddRule() }
-        add("Mở app") { collapse(); onOpenApp() }
-        add("Ẩn nút") { onHideButton() }
-        add("✕") { collapse() }
-        panel.addView(row)
+        val row1 = newRow()
+        row1.add("📁 Bộ luật") { showProfiles = true; buildPanel(); clamp(); update() }
+        row1.add("+ Luật") { collapse(); onAddRule() }
+        panel.addView(row1)
+        val row2 = newRow().apply { setPadding(0, dp(2), 0, 0) }
+        row2.add("Mở app") { collapse(); onOpenApp() }
+        row2.add("Ẩn nút") { onHideButton() }
+        row2.add("✕") { collapse() }
+        panel.addView(row2)
     }
 
     /* ---------------- kéo thả / chạm ---------------- */
@@ -284,7 +330,7 @@ class FloatingButton(
         private var moved = false
         private var fired = false
 
-        // giữ 1 giây (không kéo) -> mở / đóng bảng cài đặt
+        // giữ 0,5 giây (không kéo) -> mở / đóng bảng cài đặt
         private val longRun = Runnable {
             if (!moved) {
                 fired = true
@@ -298,7 +344,7 @@ class FloatingButton(
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; moved = false; fired = false
-                    main.postDelayed(longRun, 1000)
+                    main.postDelayed(longRun, HOLD_MS)
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX

@@ -1,6 +1,7 @@
 package com.example.screenwatcher
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.media.projection.MediaProjectionManager
@@ -15,6 +16,7 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -29,6 +31,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var status: TextView
     private lateinit var logView: TextView
     private lateinit var list: LinearLayout
+    private lateinit var profileList: LinearLayout
+    private lateinit var profileNameEt: EditText
     private lateinit var monitorSwitch: Switch
     private lateinit var bubbleSwitch: Switch
     private lateinit var seqSwitch: Switch
@@ -163,6 +167,24 @@ class MainActivity : ComponentActivity() {
         root.addView(iv)
 
         root.addView(TextView(this).apply {
+            text = "Bộ luật đã lưu"; textSize = 18f; setTextColor(Color.BLACK); setPadding(0, dp(16), 0, dp(4))
+        })
+        root.addView(TextView(this).apply {
+            text = "Lưu toàn bộ luật hiện tại (kèm ảnh mẫu, chạy tuần tự, số vòng, chu kỳ quét) dưới một cái tên. " +
+                "Mỗi tác vụ lưu một bộ riêng; sau này chỉ cần bấm ▶ Chạy (hoặc chọn trong nút nổi) là chạy luôn."
+            textSize = 12f
+        })
+        profileNameEt = EditText(this).apply {
+            hint = "Tên bộ luật (vd: Điểm danh, Farm game A…)"
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(true)
+        }
+        root.addView(profileNameEt)
+        root.addView(btn("💾 Lưu luật hiện tại thành bộ luật") { saveProfile() })
+        profileList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(profileList)
+
+        root.addView(TextView(this).apply {
             text = "Danh sách luật"; textSize = 18f; setTextColor(Color.BLACK); setPadding(0, dp(16), 0, dp(4))
         })
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -188,6 +210,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         rebuildList()
+        rebuildProfiles()
         h.post(ticker)
     }
 
@@ -195,6 +218,106 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         saveInterval()
         h.removeCallbacks(ticker)
+    }
+
+    /* ---------------- bộ luật đã lưu ---------------- */
+
+    private fun saveProfile() {
+        val name = profileNameEt.text.toString().trim()
+        if (name.isEmpty()) {
+            Toast.makeText(this, "Hãy đặt tên cho bộ luật", Toast.LENGTH_SHORT).show(); return
+        }
+        if (RuleStore.load(this).isEmpty()) {
+            Toast.makeText(this, "Chưa có luật nào để lưu", Toast.LENGTH_SHORT).show(); return
+        }
+        val doSave = {
+            saveInterval()
+            val p = ProfileStore.saveCurrent(this, name)
+            profileNameEt.setText("")
+            rebuildProfiles()
+            Toast.makeText(this, "Đã lưu bộ luật '${p.name}' (${p.ruleCount} luật)", Toast.LENGTH_SHORT).show()
+        }
+        if (ProfileStore.findByName(this, name) != null) {
+            AlertDialog.Builder(this)
+                .setMessage("Đã có bộ luật '$name'. Ghi đè bằng các luật hiện tại?")
+                .setPositiveButton("Ghi đè") { _, _ -> doSave() }
+                .setNegativeButton("Huỷ", null).show()
+        } else doSave()
+    }
+
+    private fun runProfile(p: Profile, run: Boolean) {
+        if (AppState.projectionReady) {
+            // dịch vụ đang chạy: để dịch vụ nạp rồi (tuỳ chọn) bắt đầu theo dõi luôn
+            startService(
+                Intent(this, CaptureService::class.java)
+                    .setAction(CaptureService.A_PROFILE).putExtra("id", p.id).putExtra("run", run),
+            )
+        } else {
+            if (!ProfileStore.load(this, p.id)) {
+                Toast.makeText(this, "Không nạp được bộ luật", Toast.LENGTH_SHORT).show(); return
+            }
+            Toast.makeText(
+                this,
+                if (run) "Đã nạp '${p.name}'. Hãy làm bước 3 (cấp quyền chụp màn hình) rồi bấm ▶ Chạy lại."
+                else "Đã nạp '${p.name}'",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        // cập nhật ô cài đặt trên màn hình
+        h.postDelayed({
+            cyclesEt.setText(RuleStore.seqCycles(this).toString())
+            intervalEt.setText(RuleStore.interval(this).toString())
+            updating = true; seqSwitch.isChecked = RuleStore.seqOn(this); updating = false
+            rebuildList()
+        }, 300)
+    }
+
+    private fun renameProfile(p: Profile) {
+        val et = EditText(this).apply { setText(p.name); setSingleLine(true); setSelection(p.name.length) }
+        AlertDialog.Builder(this)
+            .setTitle("Đổi tên bộ luật").setView(et)
+            .setPositiveButton("Lưu") { _, _ ->
+                if (ProfileStore.rename(this, p.id, et.text.toString())) rebuildProfiles()
+                else Toast.makeText(this, "Tên trống hoặc đã tồn tại", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Huỷ", null).show()
+    }
+
+    private fun rebuildProfiles() {
+        profileList.removeAllViews()
+        val profiles = ProfileStore.list(this)
+        if (profiles.isEmpty()) profileList.addView(TextView(this).apply {
+            text = "(chưa lưu bộ luật nào)"; setPadding(0, dp(6), 0, dp(6))
+        })
+        for (p in profiles) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(6), 0, dp(6)) }
+            row.addView(TextView(this).apply {
+                text = "${p.name}  •  ${p.ruleCount} luật"; textSize = 16f; setTextColor(Color.BLACK)
+            })
+            val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            btns.addView(smallBtn("▶ Chạy") { runProfile(p, true) })
+            btns.addView(smallBtn("Nạp") { runProfile(p, false) })
+            btns.addView(smallBtn("Ghi đè") {
+                AlertDialog.Builder(this)
+                    .setMessage("Ghi đè bộ luật '${p.name}' bằng các luật hiện tại?")
+                    .setPositiveButton("Ghi đè") { _, _ ->
+                        saveInterval()
+                        ProfileStore.saveCurrent(this, p.name)
+                        rebuildProfiles()
+                        Toast.makeText(this, "Đã cập nhật '${p.name}'", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("Huỷ", null).show()
+            })
+            btns.addView(smallBtn("Tên") { renameProfile(p) })
+            btns.addView(smallBtn("Xoá") {
+                AlertDialog.Builder(this)
+                    .setMessage("Xoá bộ luật '${p.name}'? (các luật đang dùng không bị ảnh hưởng)")
+                    .setPositiveButton("Xoá") { _, _ -> ProfileStore.delete(this, p.id); rebuildProfiles() }
+                    .setNegativeButton("Huỷ", null).show()
+            })
+            row.addView(HorizontalScrollView(this).apply { addView(btns) })
+            profileList.addView(row)
+        }
     }
 
     private fun refreshStatus() {
