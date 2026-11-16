@@ -64,12 +64,14 @@ class CaptureService : Service() {
     private var fab: FloatingButton? = null
     private var loop: Job? = null
     private val lastFire = HashMap<String, Long>()
-    /** Mốc gốc của các luật kiểu "thay đổi" (chụp khi luật bắt đầu được theo dõi, xoá sau mỗi lần chạy macro). */
+    /** Mốc gốc CỐ ĐỊNH của các luật kiểu "thay đổi" (chụp một lần khi bắt đầu theo dõi, không chụp lại sau macro). */
     private val baselines = java.util.concurrent.ConcurrentHashMap<String, ChangeMatcher.Base>()
     private var editor: ActionEditorOverlay? = null
     private var seqIndex = 0
     private var seqCycle = 0
     private var seqLogged = -1
+    /** Đã chụp mốc gốc cố định cho tất cả luật "thay đổi" kể từ lúc bắt đầu theo dõi chưa. */
+    private var baselined = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -93,7 +95,7 @@ class CaptureService : Service() {
     private fun setMonitoring(on: Boolean) {
         val was = AppState.monitoring
         AppState.monitoring = on && projection != null
-        if (AppState.monitoring && !was) { seqIndex = 0; seqCycle = 0; seqLogged = -1; baselines.clear() }
+        if (AppState.monitoring && !was) { seqIndex = 0; seqCycle = 0; seqLogged = -1; baselines.clear(); baselined = false }
         if (!AppState.monitoring) AppState.seqStatus = ""
         getSystemService(NotificationManager::class.java).notify(1, notif())
         AppState.log(if (AppState.monitoring) "▶ Bắt đầu theo dõi" else "⏸ Dừng theo dõi")
@@ -109,6 +111,7 @@ class CaptureService : Service() {
         }
         lastFire.clear()
         baselines.clear()
+        baselined = false
         AppState.log("📂 Đã nạp bộ luật '$name'")
         if (AppState.monitoring) setMonitoring(false) // dừng vòng cũ để chạy lại từ đầu
         if (run) {
@@ -138,7 +141,7 @@ class CaptureService : Service() {
                 startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             },
             onTestRule = { quickTest(it) },
-            onRunProfile = { id -> fab?.collapse(); loadProfile(id, true) },
+            onRunProfile = { id -> fab?.collapse(); loadProfile(id, false) },
             onHideButton = {
                 RuleStore.setBubbleOn(this, false)
                 fab?.hide()
@@ -236,8 +239,20 @@ class CaptureService : Service() {
         }
     }
 
+    /**
+     * Chụp MỐC GỐC cố định một lần duy nhất cho mọi luật "thay đổi" đang bật, ngay khi bắt đầu theo dõi.
+     * Mốc này không bị chụp lại sau khi chạy macro; chỉ bị bỏ khi dừng/bắt đầu lại, nạp bộ luật khác
+     * hoặc sửa vùng của luật (khi đó chữ ký vùng đổi).
+     */
+    private suspend fun ensureBaselines(frame: Bitmap) {
+        if (baselined) return
+        baselined = true
+        for (r in RuleStore.load(this).filter { it.enabled && it.type == Rule.CHANGE }) safeEval(r, frame)
+    }
+
     private suspend fun tick() {
         val frame = grab() ?: return
+        ensureBaselines(frame)
         if (RuleStore.seqOn(this)) { tickSequence(frame); return }
         for (rule in RuleStore.load(this).filter { it.enabled }) {
             val now = SystemClock.elapsedRealtime()
@@ -246,7 +261,6 @@ class CaptureService : Service() {
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             AppState.log("✔ '${rule.name}' ${hitText(rule, hit)}")
             Macro.runRule(rule, hit.x, hit.y)
-            baselines.clear() // macro làm đổi màn hình -> các luật "thay đổi" chụp lại mốc gốc
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             break // chụp lại khung mới rồi mới xét tiếp
         }
@@ -257,6 +271,7 @@ class CaptureService : Service() {
      * rồi lặp lại theo số vòng đã đặt (0 = mãi mãi). Chỉ các luật đang bật mới tham gia, theo thứ tự trong danh sách.
      */
     private suspend fun tickSequence(frame: Bitmap) {
+        ensureBaselines(frame)
         val rules = RuleStore.load(this).filter { it.enabled }
         if (rules.isEmpty()) return
         if (seqIndex >= rules.size) seqIndex = 0
@@ -271,7 +286,6 @@ class CaptureService : Service() {
         val hit = safeEval(rule, frame) ?: return
         AppState.log("✔ [${seqIndex + 1}/${rules.size}] '${rule.name}' ${hitText(rule, hit)}")
         Macro.runRule(rule, hit.x, hit.y)
-        baselines.clear()
         if (!AppState.monitoring) return
         seqIndex++
         seqLogged = -1

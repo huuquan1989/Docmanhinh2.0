@@ -8,7 +8,7 @@ import kotlin.math.sqrt
 
 /**
  * Phát hiện THAY ĐỔI của một vùng (hình hoặc chữ) so với lúc ban đầu.
- * Lần quét đầu tiên chỉ chụp "mốc gốc"; các lần sau so với mốc đó, khác từ ngưỡng trở lên thì báo có thay đổi.
+ * Mốc gốc chụp một lần và giữ cố định; các lần quét sau so với mốc đó, khác từ ngưỡng trở lên thì báo có thay đổi.
  */
 object ChangeMatcher {
     private const val CELLS = 12_000      // số ô xám tối đa của một vùng khi so sánh hình
@@ -18,7 +18,10 @@ object ChangeMatcher {
     class Snap(val w: Int, val h: Int, val g: IntArray)
 
     /** Mốc gốc của một luật: [sig] đổi (sửa vùng/kiểu/độ phân giải) thì mốc cũ bỏ đi. */
-    class Base(val sig: String, val snaps: List<Snap>, val texts: List<String>)
+    class Base(val sig: String, val snaps: List<Snap>, val texts: List<String>) {
+        /** Đã báo thay đổi rồi: phải quay về gần mốc gốc thì mới được báo lần nữa (tránh chạy lặp liên tục). */
+        @Volatile var fired = false
+    }
 
     private fun snap(crop: Bitmap): Snap {
         val area = crop.width.toDouble() * crop.height
@@ -97,11 +100,19 @@ object ChangeMatcher {
 
         var bestI = -1
         var bestD = 0.0
+        var maxD = 0.0
         for (i in boxes.indices) {
             val d = if (isText) textDiff(base.texts[i], texts[i]) else imageDiff(base.snaps[i], snaps[i])
+            if (d > maxD) maxD = d
             if (d >= rule.diffThreshold && d > bestD) { bestD = d; bestI = i }
         }
+        if (base.fired) {
+            // mốc gốc giữ nguyên; chỉ được báo lại sau khi vùng đã trở về như mốc gốc
+            if (maxD < rule.diffThreshold) base.fired = false
+            return null
+        }
         if (bestI < 0) return null
+        base.fired = true
         val bx = boxes[bestI]
         return Hit(bx.l + bx.w / 2, bx.t + bx.h / 2, bestD)
     }

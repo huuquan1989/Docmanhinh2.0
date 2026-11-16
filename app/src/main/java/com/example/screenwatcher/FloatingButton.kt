@@ -220,10 +220,10 @@ class FloatingButton(
         setOnClickListener { f() }
     }
 
-    /** Danh sách bộ luật đã lưu: chạm một tên để nạp và chạy luôn. */
+    /** Danh sách bộ luật đã lưu: chạm một tên để nạp (không chạy luôn, bấm Run để chạy). */
     private fun buildProfilePanel() {
         panel.addView(TextView(c).apply {
-            text = "Bộ luật đã lưu — chạm để nạp & chạy"; setTextColor(0xFFBBBBBB.toInt()); textSize = 12f
+            text = "Bộ luật đã lưu — chạm để nạp (chưa chạy)"; setTextColor(0xFFBBBBBB.toInt()); textSize = 12f
             setPadding(0, 0, 0, dp(4))
         })
         val profiles = ProfileStore.list(ctx)
@@ -236,7 +236,7 @@ class FloatingButton(
         }
         for (p in profiles) {
             list.addView(
-                action("▶ ${p.name} (${p.ruleCount})") { onRunProfile(p.id) },
+                action("📂 ${p.name} (${p.ruleCount})") { onRunProfile(p.id) },
                 LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .apply { bottomMargin = dp(4) },
             )

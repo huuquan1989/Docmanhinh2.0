@@ -116,8 +116,8 @@ class RuleEditActivity : Activity() {
         changeGroup.addView(TextView(this).apply {
             textSize = 11f
             text = "Hình: tỉ lệ điểm ảnh khác. Chữ: tỉ lệ ký tự khác. VD 0.10 = khác 10%; nhỏ hơn = nhạy hơn.\n" +
-                "Mốc ban đầu được chụp tự động khi bắt đầu theo dõi (chế độ tuần tự: khi tới lượt luật này). " +
-                "Sau mỗi lần chạy macro, mốc được chụp lại. Nên chọn vùng nhỏ cần theo dõi ở bên dưới."
+                "Mốc gốc được chụp MỘT LẦN khi bấm bắt đầu theo dõi và giữ cố định để so với mọi thay đổi sau đó. " +
+                "Sau khi báo thay đổi, luật chỉ báo lại khi vùng đã trở về như mốc gốc. Nên chọn vùng nhỏ cần theo dõi ở bên dưới."
         })
         root.addView(changeGroup)
 
