@@ -116,13 +116,14 @@ class RuleEditActivity : Activity() {
         changeGroup.addView(diffThr)
         changeGroup.addView(TextView(this).apply {
             textSize = 11f
-            text = "Hình: tỉ lệ điểm ảnh khác. Chữ: tỉ lệ ký tự khác. VD 0.10 = khác 10%; nhỏ hơn = nhạy hơn.\n" +
-                "Mốc gốc được lưu cố định: chạy, Thử hay dừng/chạy lại đều KHÔNG chụp lại. Chỉ chụp khi luật chưa có mốc, " +
-                "khi bạn đổi vùng, hoặc khi bấm nút chụp mốc mới. Sau khi báo thay đổi, luật chỉ báo lại khi vùng đã trở về như mốc gốc."
+            text = "Hình: trừ ảnh vùng hiện tại cho ảnh mốc, lấy mức lớn hơn giữa tỉ lệ điểm khác trên cả vùng và trên một khu vực nhỏ (icon nhỏ đổi chỗ cũng bắt được; tap_match chạm đúng chỗ thay đổi). Chữ: tỉ lệ ký tự khác. VD 0.10 = khác 10%; nhỏ hơn = nhạy hơn.\n" +
+                "Ảnh gốc chính là ảnh của vùng bạn khoanh (lưu ngay lúc khoanh) và được giữ cố định; vùng quét cũng chính là vùng đó. " +
+                "Mỗi lần quét, app cắt đúng vùng ấy rồi trừ cho ảnh gốc. Chạy, Thử hay dừng/chạy lại đều không đổi ảnh gốc. " +
+                "Sau khi báo thay đổi, luật chỉ báo lại khi vùng đã trở về như ảnh gốc. Cần khoanh ít nhất 1 vùng."
         })
         baseTv = TextView(this).apply { setTextColor(Color.BLACK); setPadding(0, dp(8), 0, 0) }
         changeGroup.addView(baseTv)
-        changeGroup.addView(btn("📌 Chụp mốc gốc mới (sau 4 giây, ghi đè mốc cũ)") {
+        changeGroup.addView(btn("🖼 Chụp lại ảnh gốc của các vùng đã chọn (sau 4 giây)") {
             collect(); RuleStore.upsert(this, rule)
             if (!AppState.projectionReady) {
                 Toast.makeText(this, "Hãy cấp quyền chụp màn hình ở màn hình chính trước", Toast.LENGTH_LONG).show()
@@ -148,7 +149,7 @@ class RuleEditActivity : Activity() {
         regionsTv = TextView(this)
         root.addView(regionsTv)
         root.addView(btn("Chọn vùng trên màn hình (thêm được nhiều vùng)") { pick("REGIONS") })
-        root.addView(btn("Xoá hết vùng") { rule.regions.clear(); refreshRegions() })
+        root.addView(btn("Xoá hết vùng") { rule.regions.clear(); ChangeMatcher.delete(this, rule.id); refreshRegions(); refreshBase() })
 
         root.addView(label("Macro khi khớp / khi có thay đổi (mỗi dòng 1 lệnh)"))
         macro = EditText(this).apply {
@@ -212,9 +213,13 @@ class RuleEditActivity : Activity() {
     }
 
     private fun refreshBase() {
-        val t = ChangeMatcher.savedAt(this, rule.id)
-        baseTv.text = if (t == 0L) "Mốc gốc: chưa có (sẽ tự chụp lần đầu khi thử/chạy, hoặc bấm nút bên dưới)"
-        else "Mốc gốc: đã lưu lúc " + java.text.SimpleDateFormat("HH:mm:ss dd/MM", java.util.Locale.getDefault()).format(java.util.Date(t))
+        val n = ChangeMatcher.countOriginals(this, rule)
+        val total = rule.regions.size
+        baseTv.text = when {
+            total == 0 -> "Ảnh gốc: chưa có — hãy khoanh vùng (vùng khoanh chính là ảnh gốc)"
+            n >= total -> "Ảnh gốc: đã lưu cho $n/$total vùng"
+            else -> "Ảnh gốc: mới có $n/$total vùng — bấm \"Chụp lại ảnh gốc\" hoặc khoanh lại vùng"
+        }
     }
 
     private fun toggleGroups() {
