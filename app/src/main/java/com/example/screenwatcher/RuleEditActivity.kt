@@ -40,6 +40,7 @@ class RuleEditActivity : Activity() {
     private lateinit var thrGroup: LinearLayout
     private lateinit var changeMode: Spinner
     private lateinit var diffThr: EditText
+    private lateinit var baseTv: TextView
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -116,8 +117,21 @@ class RuleEditActivity : Activity() {
         changeGroup.addView(TextView(this).apply {
             textSize = 11f
             text = "Hình: tỉ lệ điểm ảnh khác. Chữ: tỉ lệ ký tự khác. VD 0.10 = khác 10%; nhỏ hơn = nhạy hơn.\n" +
-                "Mốc gốc được chụp MỘT LẦN khi bấm bắt đầu theo dõi và giữ cố định để so với mọi thay đổi sau đó. " +
-                "Sau khi báo thay đổi, luật chỉ báo lại khi vùng đã trở về như mốc gốc. Nên chọn vùng nhỏ cần theo dõi ở bên dưới."
+                "Mốc gốc được lưu cố định: chạy, Thử hay dừng/chạy lại đều KHÔNG chụp lại. Chỉ chụp khi luật chưa có mốc, " +
+                "khi bạn đổi vùng, hoặc khi bấm nút chụp mốc mới. Sau khi báo thay đổi, luật chỉ báo lại khi vùng đã trở về như mốc gốc."
+        })
+        baseTv = TextView(this).apply { setTextColor(Color.BLACK); setPadding(0, dp(8), 0, 0) }
+        changeGroup.addView(baseTv)
+        changeGroup.addView(btn("📌 Chụp mốc gốc mới (sau 4 giây, ghi đè mốc cũ)") {
+            collect(); RuleStore.upsert(this, rule)
+            if (!AppState.projectionReady) {
+                Toast.makeText(this, "Hãy cấp quyền chụp màn hình ở màn hình chính trước", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Chuyển sang màn hình gốc trong 4 giây…", Toast.LENGTH_LONG).show()
+                startService(
+                    Intent(this, CaptureService::class.java).setAction(CaptureService.A_BASELINE).putExtra("id", rule.id),
+                )
+            }
         })
         root.addView(changeGroup)
 
@@ -189,6 +203,18 @@ class RuleEditActivity : Activity() {
         toggleGroups()
         refreshRegions()
         refreshTemplate()
+        refreshBase()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::baseTv.isInitialized) refreshBase()
+    }
+
+    private fun refreshBase() {
+        val t = ChangeMatcher.savedAt(this, rule.id)
+        baseTv.text = if (t == 0L) "Mốc gốc: chưa có (sẽ tự chụp lần đầu khi thử/chạy, hoặc bấm nút bên dưới)"
+        else "Mốc gốc: đã lưu lúc " + java.text.SimpleDateFormat("HH:mm:ss dd/MM", java.util.Locale.getDefault()).format(java.util.Date(t))
     }
 
     private fun toggleGroups() {

@@ -106,6 +106,7 @@ object RuleStore {
     fun delete(c: Context, id: String) {
         saveAll(c, load(c).filter { it.id != id })
         templateFile(c, id).delete()
+        ChangeMatcher.delete(c, id)
     }
 
     fun templateFile(c: Context, id: String) = File(c.filesDir, "tpl_$id.png")

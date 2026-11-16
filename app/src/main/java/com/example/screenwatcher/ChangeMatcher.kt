@@ -1,6 +1,11 @@
 package com.example.screenwatcher
 
+import android.content.Context
 import android.graphics.Bitmap
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -17,10 +22,47 @@ object ChangeMatcher {
     /** Ảnh xám thu nhỏ của một vùng. */
     class Snap(val w: Int, val h: Int, val g: IntArray)
 
-    /** Mốc gốc của một luật: [sig] đổi (sửa vùng/kiểu/độ phân giải) thì mốc cũ bỏ đi. */
-    class Base(val sig: String, val snaps: List<Snap>, val texts: List<String>) {
-        /** Đã báo thay đổi rồi: phải quay về gần mốc gốc thì mới được báo lần nữa (tránh chạy lặp liên tục). */
-        @Volatile var fired = false
+    /** Mốc gốc của một luật: [sig] đổi (sửa vùng/kiểu/độ phân giải) thì mốc cũ không còn dùng được. */
+    class Base(val sig: String, val snaps: List<Snap>, val texts: List<String>)
+
+    /** Luật đã báo thay đổi rồi: phải quay về gần mốc gốc mới được báo lại (chỉ lúc chạy thật, chỉ trong bộ nhớ). */
+    private val fired = ConcurrentHashMap<String, Boolean>()
+    fun resetLatches() = fired.clear()
+
+    /* ---------- mốc gốc được lưu vào file, không bị ghi đè khi thử hay chạy ---------- */
+
+    fun baseFile(c: Context, id: String) = File(c.filesDir, "base_$id.bin")
+
+    fun savedAt(c: Context, id: String): Long = baseFile(c, id).let { if (it.exists()) it.lastModified() else 0L }
+
+    fun delete(c: Context, id: String) { baseFile(c, id).delete(); fired.remove(id) }
+
+    private fun save(c: Context, id: String, b: Base) {
+        runCatching {
+            DataOutputStream(baseFile(c, id).outputStream().buffered()).use { o ->
+                o.writeUTF(b.sig)
+                o.writeInt(b.snaps.size)
+                for (sn in b.snaps) { o.writeInt(sn.w); o.writeInt(sn.h); for (v in sn.g) o.writeShort(v) }
+                o.writeInt(b.texts.size)
+                for (t in b.texts) o.writeUTF(t)
+            }
+        }
+    }
+
+    private fun load(c: Context, id: String): Base? {
+        val f = baseFile(c, id)
+        if (!f.exists()) return null
+        return runCatching {
+            DataInputStream(f.inputStream().buffered()).use { i ->
+                val sig = i.readUTF()
+                val snaps = List(i.readInt()) {
+                    val w = i.readInt(); val h = i.readInt()
+                    Snap(w, h, IntArray(w * h) { i.readShort().toInt() })
+                }
+                val texts = List(i.readInt()) { i.readUTF() }
+                Base(sig, snaps, texts)
+            }
+        }.getOrNull()
     }
 
     private fun snap(crop: Bitmap): Snap {
@@ -64,11 +106,9 @@ object ChangeMatcher {
         return prev[b.length].toDouble() / m
     }
 
-    /**
-     * Quét các vùng của [rule] trên [frame]. Chưa có mốc gốc -> chụp mốc rồi trả null.
-     * Có mốc -> trả Hit ở tâm vùng thay đổi nhiều nhất (score = mức thay đổi 0..1) nếu >= ngưỡng.
-     */
-    suspend fun detect(rule: Rule, frame: Bitmap, bases: MutableMap<String, Base>): Hit? {
+    private class Obs(val sig: String, val boxes: List<Region>, val snaps: List<Snap>, val texts: List<String>, val isText: Boolean)
+
+    private suspend fun observe(rule: Rule, frame: Bitmap): Obs? {
         val regs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
         val boxes = regs.mapNotNull { rg ->
             val l = rg.l.coerceIn(0, frame.width - 1)
@@ -78,11 +118,9 @@ object ChangeMatcher {
             if (r - l < 8 || b - t < 8) null else Region(l, t, r, b)
         }
         if (boxes.isEmpty()) return null
-
         val isText = rule.changeMode == Rule.CH_TEXT
         val sig = "${rule.changeMode}|${frame.width}x${frame.height}|" +
             boxes.joinToString(";") { "${it.l},${it.t},${it.r},${it.b}" }
-
         val snaps = ArrayList<Snap>()
         val texts = ArrayList<String>()
         for (bx in boxes) {
@@ -90,30 +128,64 @@ object ChangeMatcher {
             if (isText) texts.add(TextMatcher.readNorm(crop)) else snaps.add(snap(crop))
             if (crop !== frame) crop.recycle()
         }
+        return Obs(sig, boxes, snaps, texts, isText)
+    }
 
-        val base = bases[rule.id]
-        if (base == null || base.sig != sig) {
-            bases[rule.id] = Base(sig, snaps, texts)
-            AppState.log("📌 Đã chụp mốc gốc cho '${rule.name}'")
+    /** Mốc gốc hợp lệ hiện có (bộ nhớ đệm hoặc file) cho cấu hình vùng/kiểu hiện tại? */
+    private fun validBase(c: Context, rule: Rule, sig: String, cache: MutableMap<String, Base>): Base? {
+        val b = cache[rule.id] ?: load(c, rule.id)?.also { cache[rule.id] = it }
+        return if (b != null && b.sig == sig) b else null
+    }
+
+    /**
+     * Chụp mốc gốc. [force] = false: chỉ chụp khi CHƯA có mốc hợp lệ (không đụng vào mốc đã có).
+     * [force] = true: ghi đè mốc (chỉ dùng khi người dùng bấm "Chụp mốc gốc mới").
+     * Trả về true nếu vừa chụp mốc mới.
+     */
+    suspend fun capture(c: Context, rule: Rule, frame: Bitmap, cache: MutableMap<String, Base>, force: Boolean = false): Boolean {
+        val o = observe(rule, frame) ?: return false
+        if (!force && validBase(c, rule, o.sig, cache) != null) return false
+        val b = Base(o.sig, o.snaps, o.texts)
+        cache[rule.id] = b
+        save(c, rule.id, b)
+        fired.remove(rule.id)
+        AppState.log("📌 Đã chụp mốc gốc cho '${rule.name}'")
+        return true
+    }
+
+    /** Luật đã có mốc gốc hợp lệ để so sánh chưa? (không cần khung hình) */
+    fun hasBase(c: Context, rule: Rule, cache: MutableMap<String, Base>): Boolean =
+        (cache[rule.id] ?: load(c, rule.id)) != null
+
+    /**
+     * So khung hình với mốc gốc ĐÃ LƯU. Chưa có mốc (hoặc đã đổi vùng/độ phân giải) -> chụp mốc rồi trả null.
+     * Có mốc -> trả Hit ở tâm vùng thay đổi nhiều nhất (score = mức thay đổi 0..1) nếu >= ngưỡng.
+     * [test] = true: chỉ so sánh, không đổi trạng thái "đã báo" (dùng cho nút Thử).
+     */
+    suspend fun detect(
+        c: Context, rule: Rule, frame: Bitmap, cache: MutableMap<String, Base>, test: Boolean = false,
+    ): Hit? {
+        val o = observe(rule, frame) ?: return null
+        val base = validBase(c, rule, o.sig, cache)
+        if (base == null) {
+            capture(c, rule, frame, cache, force = true)
             return null
         }
-
         var bestI = -1
         var bestD = 0.0
         var maxD = 0.0
-        for (i in boxes.indices) {
-            val d = if (isText) textDiff(base.texts[i], texts[i]) else imageDiff(base.snaps[i], snaps[i])
+        for (i in o.boxes.indices) {
+            val d = if (o.isText) textDiff(base.texts[i], o.texts[i]) else imageDiff(base.snaps[i], o.snaps[i])
             if (d > maxD) maxD = d
             if (d >= rule.diffThreshold && d > bestD) { bestD = d; bestI = i }
         }
-        if (base.fired) {
-            // mốc gốc giữ nguyên; chỉ được báo lại sau khi vùng đã trở về như mốc gốc
-            if (maxD < rule.diffThreshold) base.fired = false
+        if (!test && fired[rule.id] == true) {
+            if (maxD < rule.diffThreshold) fired.remove(rule.id) // đã về như mốc gốc -> báo lại được
             return null
         }
         if (bestI < 0) return null
-        base.fired = true
-        val bx = boxes[bestI]
+        if (!test) fired[rule.id] = true
+        val bx = o.boxes[bestI]
         return Hit(bx.l + bx.w / 2, bx.t + bx.h / 2, bestD)
     }
 }

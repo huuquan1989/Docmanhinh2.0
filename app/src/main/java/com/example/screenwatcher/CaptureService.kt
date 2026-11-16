@@ -49,6 +49,7 @@ class CaptureService : Service() {
         const val A_TEST = "sw.test"
         const val A_BUBBLE = "sw.bubble"
         const val A_PROFILE = "sw.profile"
+        const val A_BASELINE = "sw.baseline"
         private const val CH = "sw_capture"
     }
 
@@ -86,6 +87,7 @@ class CaptureService : Service() {
                 i.getStringExtra("kind") ?: "tap", i.getLongExtra("ms", 60L),
                 i.getIntExtra("times", 1), i.getLongExtra("gap", 150L),
             )
+            A_BASELINE -> recaptureBaseline(i.getStringExtra("id") ?: "")
             A_TEST -> test(i.getStringExtra("id") ?: "")
             A_PROFILE -> loadProfile(i.getStringExtra("id") ?: "", i.getBooleanExtra("run", true))
         }
@@ -95,7 +97,7 @@ class CaptureService : Service() {
     private fun setMonitoring(on: Boolean) {
         val was = AppState.monitoring
         AppState.monitoring = on && projection != null
-        if (AppState.monitoring && !was) { seqIndex = 0; seqCycle = 0; seqLogged = -1; baselines.clear(); baselined = false }
+        if (AppState.monitoring && !was) { seqIndex = 0; seqCycle = 0; seqLogged = -1; baselined = false; ChangeMatcher.resetLatches() }
         if (!AppState.monitoring) AppState.seqStatus = ""
         getSystemService(NotificationManager::class.java).notify(1, notif())
         AppState.log(if (AppState.monitoring) "▶ Bắt đầu theo dõi" else "⏸ Dừng theo dõi")
@@ -110,8 +112,9 @@ class CaptureService : Service() {
             return
         }
         lastFire.clear()
-        baselines.clear()
+        baselines.clear() // chỉ bộ nhớ đệm; mốc gốc đã lưu trong file của bộ luật
         baselined = false
+        ChangeMatcher.resetLatches()
         AppState.log("📂 Đã nạp bộ luật '$name'")
         if (AppState.monitoring) setMonitoring(false) // dừng vòng cũ để chạy lại từ đầu
         if (run) {
@@ -240,14 +243,15 @@ class CaptureService : Service() {
     }
 
     /**
-     * Chụp MỐC GỐC cố định một lần duy nhất cho mọi luật "thay đổi" đang bật, ngay khi bắt đầu theo dõi.
-     * Mốc này không bị chụp lại sau khi chạy macro; chỉ bị bỏ khi dừng/bắt đầu lại, nạp bộ luật khác
-     * hoặc sửa vùng của luật (khi đó chữ ký vùng đổi).
+     * Mốc gốc được LƯU VÀO FILE và cố định: chỉ chụp khi luật chưa có mốc (hoặc đã đổi vùng/độ phân giải),
+     * hoặc khi người dùng bấm "Chụp mốc gốc mới". Chạy macro, Thử, Thử nhanh, dừng/chạy lại đều không đổi mốc.
      */
     private suspend fun ensureBaselines(frame: Bitmap) {
         if (baselined) return
         baselined = true
-        for (r in RuleStore.load(this).filter { it.enabled && it.type == Rule.CHANGE }) safeEval(r, frame)
+        for (r in RuleStore.load(this).filter { it.enabled && it.type == Rule.CHANGE }) {
+            try { ChangeMatcher.capture(this, r, frame, baselines, force = false) } catch (e: CancellationException) { throw e } catch (e: Exception) { }
+        }
     }
 
     private suspend fun tick() {
@@ -303,9 +307,9 @@ class CaptureService : Service() {
 
     private suspend fun safeEval(
         rule: Rule, frame: Bitmap,
-        bases: MutableMap<String, ChangeMatcher.Base> = baselines,
+        test: Boolean = false,
     ): Hit? = try {
-        evaluate(rule, frame, bases)
+        evaluate(rule, frame, test)
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -319,24 +323,43 @@ class CaptureService : Service() {
 
     private fun missText(rule: Rule) = if (rule.type == Rule.CHANGE) "không thấy thay đổi" else "không khớp"
 
-    /** Thử luật "thay đổi": chụp mốc gốc, chờ [waitMs] để người dùng làm vùng đó đổi, rồi so sánh. */
+    /**
+     * Thử luật "thay đổi": so với mốc gốc ĐÃ LƯU (không chụp lại). Chỉ khi luật chưa có mốc thì chụp mốc lần đầu,
+     * chờ [waitMs] để người dùng làm vùng đó đổi, rồi so sánh.
+     */
     private suspend fun probeChange(rule: Rule, waitMs: Long): Pair<Bitmap?, Hit?> {
-        val tmp = java.util.concurrent.ConcurrentHashMap<String, ChangeMatcher.Base>()
         val f0 = grab() ?: return null to null
-        safeEval(rule, f0, tmp)
+        val captured = try { ChangeMatcher.capture(this, rule, f0, baselines, force = false) } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
+        if (!captured) return f0 to safeEval(rule, f0, test = true)
         main.post {
             Toast.makeText(
-                this, "Đã chụp mốc gốc '${rule.name}'. Hãy làm vùng đó thay đổi trong ${waitMs / 1000} giây…",
+                this, "Luật chưa có mốc gốc nên đã chụp mốc '${rule.name}'. Hãy làm vùng đó thay đổi trong ${waitMs / 1000} giây…",
                 Toast.LENGTH_LONG,
             ).show()
         }
         delay(waitMs)
         val f1 = grab() ?: return null to null
-        return f1 to safeEval(rule, f1, tmp)
+        return f1 to safeEval(rule, f1, test = true)
     }
 
-    private suspend fun evaluate(rule: Rule, frame: Bitmap, bases: MutableMap<String, ChangeMatcher.Base>): Hit? {
-        if (rule.type == Rule.CHANGE) return ChangeMatcher.detect(rule, frame, bases)
+    /** Người dùng chủ động chụp lại mốc gốc: chờ 4 giây để chuyển sang màn hình gốc rồi chụp (ghi đè mốc cũ). */
+    private fun recaptureBaseline(id: String) {
+        val rule = RuleStore.get(this, id) ?: return
+        if (rule.type != Rule.CHANGE) return
+        fab?.hide()
+        scope.launch {
+            delay(4000)
+            val f = grab()
+            val ok = f != null && try { ChangeMatcher.capture(this@CaptureService, rule, f, baselines, force = true) } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
+            main.post {
+                Toast.makeText(this@CaptureService, if (ok) "Đã chụp mốc gốc '${rule.name}'" else "Không chụp được mốc gốc", Toast.LENGTH_LONG).show()
+                showBubble()
+            }
+        }
+    }
+
+    private suspend fun evaluate(rule: Rule, frame: Bitmap, test: Boolean = false): Hit? {
+        if (rule.type == Rule.CHANGE) return ChangeMatcher.detect(this, rule, frame, baselines, test)
         val regs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
         val tpl: Bitmap? = if (rule.type == Rule.IMAGE) {
             BitmapFactory.decodeFile(RuleStore.templateFile(this, rule.id).path) ?: return null

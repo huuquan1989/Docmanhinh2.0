@@ -54,6 +54,8 @@ object ProfileStore {
         for (r in rules) {
             val src = RuleStore.templateFile(c, r.id)
             if (src.exists()) src.copyTo(File(d, src.name), overwrite = true)
+            val bf = ChangeMatcher.baseFile(c, r.id)
+            if (bf.exists()) bf.copyTo(File(d, bf.name), overwrite = true)
         }
         return Profile(id, clean, now, rules.size)
     }
@@ -70,6 +72,14 @@ object ProfileStore {
             .forEach { it.delete() }
         (dir(c, id).listFiles() ?: emptyArray())
             .filter { it.name.startsWith("tpl_") && it.name.endsWith(".png") }
+            .forEach { it.copyTo(File(c.filesDir, it.name), overwrite = true) }
+
+        // mốc gốc "thay đổi" đi theo bộ luật
+        (c.filesDir.listFiles() ?: emptyArray())
+            .filter { it.name.startsWith("base_") && it.name.endsWith(".bin") }
+            .forEach { it.delete() }
+        (dir(c, id).listFiles() ?: emptyArray())
+            .filter { it.name.startsWith("base_") && it.name.endsWith(".bin") }
             .forEach { it.copyTo(File(c.filesDir, it.name), overwrite = true) }
 
         RuleStore.saveAll(c, rules)
