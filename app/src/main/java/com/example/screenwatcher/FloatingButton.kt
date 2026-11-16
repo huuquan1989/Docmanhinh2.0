@@ -17,14 +17,13 @@ import android.view.WindowManager.LayoutParams
 import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * Nút nổi kéo thả được, có công tắc bật/tắt theo dõi nhanh ngay bên cạnh.
+ * Nút nổi kéo thả được. Chạm vào nút để hiện nút Run / Stop bên cạnh (chạy hoặc dừng theo dõi).
  * Giữ nút 1 giây để mở/đóng bảng cài đặt: bật/tắt từng luật, thêm luật mới, mở app, ẩn nút.
  * Màu nút: xanh = đang theo dõi, xám = đang tắt.
  */
@@ -37,7 +36,7 @@ class FloatingButton(
 ) {
     private companion object {
         const val BUBBLE = 48   // dp
-        const val ROW_W = 120   // dp, nút + công tắc nhanh
+        const val ROW_W = 120   // dp, nút + nút Run/Stop
         const val PANEL_W = 250 // dp
         const val PANEL_H = 340 // dp, ước lượng chiều cao tối đa của bảng
     }
@@ -50,7 +49,7 @@ class FloatingButton(
 
     private val root = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
     private val bubble = TextView(c)
-    private val quick = Switch(c)
+    private val runBtn = TextView(c)
     private val topRow = LinearLayout(c)
     private val panel = LinearLayout(c)
 
@@ -63,7 +62,7 @@ class FloatingButton(
 
     private var added = false
     private var expanded = false
-    private var syncing = false
+    private val hideRun = Runnable { showRun(false) }
 
     init {
         bubble.apply {
@@ -72,31 +71,28 @@ class FloatingButton(
             layoutParams = LinearLayout.LayoutParams(dp(BUBBLE), dp(BUBBLE))
             setOnTouchListener(DragListener())
         }
-        quick.apply {
-            scaleX = 0.85f; scaleY = 0.85f
-            setOnCheckedChangeListener { v, on ->
-                if (syncing) return@setOnCheckedChangeListener
-                if (on && !AppState.projectionReady) {
-                    Toast.makeText(ctx, "Chưa cấp quyền chụp màn hình", Toast.LENGTH_SHORT).show()
-                    syncing = true; (v as Switch).isChecked = false; syncing = false
-                    return@setOnCheckedChangeListener
-                }
-                onMonitor(on)
-            }
-        }
-        val pill = LinearLayout(c).apply {
+        runBtn.apply {
+            textSize = 14f; setTextColor(Color.WHITE); typeface = android.graphics.Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            background = bg(0xB0000000.toInt(), dp(20).toFloat())
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-            addView(quick)
+            setPadding(dp(16), 0, dp(16), 0)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40))
+                .apply { leftMargin = dp(4) }
+            visibility = View.GONE
+            setOnClickListener {
+                val start = !AppState.monitoring
+                if (start && !AppState.projectionReady) {
+                    Toast.makeText(ctx, "Chưa cấp quyền chụp màn hình", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                onMonitor(start)
+                showRun(false)
+            }
         }
         topRow.apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(bubble)
-            addView(pill, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { leftMargin = dp(4) })
+            addView(runBtn)
         }
         panel.apply {
             orientation = LinearLayout.VERTICAL
@@ -137,11 +133,25 @@ class FloatingButton(
     private fun paintBubble() {
         val col = if (AppState.monitoring) 0xE02E7D32.toInt() else 0xE0616161.toInt()
         bubble.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(col) }
-        if (quick.isChecked != AppState.monitoring) {
-            syncing = true
-            quick.isChecked = AppState.monitoring
-            syncing = false
+        if (runBtn.visibility == View.VISIBLE) paintRun()
+    }
+
+    private fun paintRun() {
+        val running = AppState.monitoring
+        runBtn.text = if (running) "■ Stop" else "▶ Run"
+        runBtn.background = bg(if (running) 0xE0C62828.toInt() else 0xE02E7D32.toInt(), dp(20).toFloat())
+    }
+
+    /** Hiện / ẩn nút Run (đang dừng) hoặc Stop (đang chạy) cạnh nút nổi; tự ẩn sau 4 giây. */
+    private fun showRun(show: Boolean) {
+        main.removeCallbacks(hideRun)
+        runBtn.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) {
+            paintRun()
+            main.postDelayed(hideRun, 4000)
         }
+        clamp()
+        update()
     }
 
     /* ---------------- hiện / ẩn ---------------- */
@@ -152,6 +162,7 @@ class FloatingButton(
         lp.x = x; lp.y = y
         expanded = false
         panel.visibility = View.GONE
+        runBtn.visibility = View.GONE
         clamp()
         paintBubble()
         added = runCatching { wm.addView(root, lp) }.isSuccess
@@ -159,6 +170,7 @@ class FloatingButton(
 
     fun hide() {
         if (!added) return
+        main.removeCallbacks(hideRun)
         runCatching { wm.removeView(root) }
         added = false
         expanded = false
@@ -253,11 +265,14 @@ class FloatingButton(
         private var startX = 0
         private var startY = 0
         private var moved = false
+        private var fired = false
 
         // giữ 1 giây (không kéo) -> mở / đóng bảng cài đặt
         private val longRun = Runnable {
             if (!moved) {
+                fired = true
                 bubble.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                showRun(false)
                 toggle()
             }
         }
@@ -265,7 +280,7 @@ class FloatingButton(
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; moved = false
+                    downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; moved = false; fired = false
                     main.postDelayed(longRun, 1000)
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -283,6 +298,7 @@ class FloatingButton(
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     main.removeCallbacks(longRun)
                     if (moved) RuleStore.setBubblePos(ctx, lp.x, lp.y)
+                    else if (!fired && e.action == MotionEvent.ACTION_UP) showRun(runBtn.visibility != View.VISIBLE)
                 }
             }
             return true
