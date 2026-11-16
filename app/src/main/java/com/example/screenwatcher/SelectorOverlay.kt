@@ -205,7 +205,7 @@ class SelectorOverlay(
                 c.drawText("${i + 1}", r.l + 10f, r.t + 44f, txt)
                 if (i < rects.size) {
                     // chấm điều khiển ở 4 góc và giữa 4 cạnh
-                    val hr = 7 * resources.displayMetrics.density
+                    val hr = 1.5f * resources.displayMetrics.density
                     val cx = (rf.left + rf.right) / 2
                     val cy = (rf.top + rf.bottom) / 2
                     for (hx in floatArrayOf(rf.left, cx, rf.right)) {
