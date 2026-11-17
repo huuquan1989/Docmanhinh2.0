@@ -82,6 +82,7 @@ object ProfileStore {
             .filter { it.name.startsWith("base_") && it.name.endsWith(".bin") }
             .forEach { it.copyTo(File(c.filesDir, it.name), overwrite = true) }
 
+        rules.forEach { it.enabled = true } // nạp bộ luật xong thì mọi luật đều được tích sẵn, chờ chạy
         RuleStore.saveAll(c, rules)
         RuleStore.setSeqOn(c, o.optBoolean("seqOn", false))
         RuleStore.setSeqCycles(c, o.optInt("seqCycles", 1))
