@@ -1,6 +1,11 @@
 package com.example.screenwatcher
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
+import android.graphics.Rect
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -25,6 +30,9 @@ data class Hit(val x: Int, val y: Int, val score: Double, val scale: Double = 1.
 object TextMatcher {
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
+    /** Vùng nhỏ hơn mức này (số điểm ảnh) mới thử thêm lượt OCR "phóng to + tăng tương phản" khi lượt đầu không thấy. */
+    private const val ENHANCE_MAX_PX = 700_000L
+
     /** Chữ thường, bỏ dấu tiếng Việt, bỏ khoảng trắng/ký tự đặc biệt -> so khớp bền hơn với lỗi OCR. */
     fun norm(s: String): String {
         val n = Normalizer.normalize(s.lowercase(Locale.ROOT), Normalizer.Form.NFD).replace("đ", "d")
@@ -35,23 +43,53 @@ object TextMatcher {
         }
     }
 
-    /** Tìm chuỗi con gần giống nhất (Sellers). Trả về độ giống nếu >= minRatio. */
-    private fun approx(text: String, pat: String, minRatio: Double): Double? {
+    /**
+     * Gộp các ký tự OCR hay đọc nhầm thành một (o/0, l/i/1, s/5, b/8, z/2, u/v, q/g/9).
+     * Chỉ đổi 1 ký tự -> 1 ký tự nên độ dài và vị trí ký tự giữ nguyên. Dùng cho cả mẫu lẫn chữ đọc được.
+     */
+    fun fold(s: String): String {
+        val sb = StringBuilder(s.length)
+        for (c in s) sb.append(
+            when (c) {
+                'o' -> '0'
+                'l', 'i' -> '1'
+                's' -> '5'
+                'b' -> '8'
+                'z' -> '2'
+                'u' -> 'v'
+                'q', '9' -> 'g'
+                else -> c
+            },
+        )
+        return sb.toString()
+    }
+
+    private class Match(val score: Double, val start: Int, val end: Int)
+
+    /**
+     * Tìm chuỗi con gần giống nhất (Sellers) và trả cả vị trí. Độ giống >= minRatio mới tính.
+     * Quét hết văn bản để lấy chỗ khớp TỐT NHẤT, không dừng ở chỗ khớp đầu tiên.
+     */
+    private fun approx(text: String, pat: String, minRatio: Double): Match? {
         if (pat.isEmpty() || text.isEmpty()) return null
-        if (text.contains(pat)) return 1.0
+        val ix = text.indexOf(pat)
+        if (ix >= 0) return Match(1.0, ix, ix + pat.length)
         val m = pat.length
         val allowed = floor(m * (1 - minRatio)).toInt()
         if (allowed <= 0) return null
         var prev = IntArray(m + 1) { it }
-        for (c in text) {
+        var bestD = Int.MAX_VALUE
+        var bestEnd = -1
+        for ((k, c) in text.withIndex()) {
             val cur = IntArray(m + 1)
             for (i in 1..m) {
                 cur[i] = minOf(prev[i] + 1, cur[i - 1] + 1, prev[i - 1] + if (pat[i - 1] == c) 0 else 1)
             }
-            if (cur[m] <= allowed) return 1.0 - cur[m].toDouble() / m
+            if (cur[m] < bestD) { bestD = cur[m]; bestEnd = k + 1 }
             prev = cur
         }
-        return null
+        if (bestD > allowed || bestEnd < 0) return null
+        return Match(1.0 - bestD.toDouble() / m, max(0, bestEnd - m), bestEnd)
     }
 
     private suspend fun recognize(bmp: Bitmap): Text = suspendCancellableCoroutine { c ->
@@ -63,25 +101,72 @@ object TextMatcher {
     /** Đọc toàn bộ chữ trong ảnh, đã chuẩn hoá (dùng cho so sánh thay đổi). */
     suspend fun readNorm(bmp: Bitmap): String = norm(recognize(bmp).text)
 
-    /** rule.text có thể chứa nhiều lựa chọn, ngăn cách bằng dấu | (khớp 1 trong số đó là đủ). */
-    suspend fun find(bmp: Bitmap, rule: Rule): Hit? {
-        val pats = rule.text.split("|").map { norm(it) }.filter { it.isNotEmpty() }
-        if (pats.isEmpty()) return null
-        val ratio = if (rule.fuzzy) rule.threshold else 1.0
-        val res = recognize(bmp)
+    /** Phóng to 2x, chuyển xám và tăng tương phản: giúp OCR đọc chữ nhỏ/mờ. */
+    private fun enhance(src: Bitmap): Bitmap {
+        val big = Bitmap.createScaledBitmap(src, src.width * 2, src.height * 2, true)
+        val out = Bitmap.createBitmap(big.width, big.height, Bitmap.Config.ARGB_8888)
+        val cm = ColorMatrix().apply { setSaturation(0f) }
+        val k = 1.8f
+        val t = (-0.5f * k + 0.5f) * 255f
+        cm.postConcat(ColorMatrix(floatArrayOf(k, 0f, 0f, 0f, t, 0f, k, 0f, 0f, t, 0f, 0f, k, 0f, t, 0f, 0f, 0f, 1f, 0f)))
+        Canvas(out).drawBitmap(big, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(cm) })
+        big.recycle()
+        return out
+    }
+
+    /** Duyệt kết quả OCR, lấy chỗ khớp tốt nhất; toạ độ nhân [inv] để quy về ảnh gốc (lượt phóng to thì inv = 0.5). */
+    private fun scan(res: Text, bmp: Bitmap, pats: List<String>, ratio: Double, inv: Double): Hit? {
+        var best: Hit? = null
         for (line in res.textBlocks.flatMap { it.lines }) {
-            val t = norm(line.text)
+            val els = line.elements
+            val parts = if (els.isEmpty()) listOf(fold(norm(line.text))) else els.map { fold(norm(it.text)) }
+            val t = parts.joinToString("")
+            if (t.isEmpty()) continue
             for (p in pats) {
-                val s = approx(t, p, ratio) ?: continue
-                val r = line.boundingBox ?: continue
-                return Hit(r.centerX(), r.centerY(), s)
+                val mt = approx(t, p, ratio) ?: continue
+                if (best != null && mt.score <= best.score) continue
+                // hộp bao các từ nằm trong đoạn khớp -> chạm đúng chỗ khớp, không phải tâm cả dòng
+                var box: Rect? = null
+                if (els.isNotEmpty()) {
+                    var off = 0
+                    for ((n, e) in els.withIndex()) {
+                        val len = parts[n].length
+                        if (len > 0 && off < mt.end && off + len > mt.start) {
+                            e.boundingBox?.let { b -> box = box?.also { it.union(b) } ?: Rect(b) }
+                        }
+                        off += len
+                    }
+                }
+                val r = box ?: line.boundingBox ?: continue
+                best = Hit(
+                    (r.centerX() * inv).roundToInt(), (r.centerY() * inv).roundToInt(), mt.score,
+                )
             }
         }
+        if (best != null) return best
         // Cụm chữ nằm vắt qua nhiều dòng
-        val all = norm(res.text)
+        val all = fold(norm(res.text))
         for (p in pats) {
-            val s = approx(all, p, ratio) ?: continue
-            return Hit(bmp.width / 2, bmp.height / 2, s)
+            val mt = approx(all, p, ratio) ?: continue
+            if (best == null || mt.score > best.score) best = Hit(bmp.width / 2, bmp.height / 2, mt.score)
+        }
+        return best
+    }
+
+    /** rule.text có thể chứa nhiều lựa chọn, ngăn cách bằng dấu | (khớp 1 trong số đó là đủ). */
+    suspend fun find(bmp: Bitmap, rule: Rule): Hit? {
+        val pats = rule.text.split("|").map { fold(norm(it)) }.filter { it.isNotEmpty() }
+        if (pats.isEmpty()) return null
+        val ratio = if (rule.fuzzy) rule.threshold else 1.0
+        scan(recognize(bmp), bmp, pats, ratio, 1.0)?.let { return it }
+        // Không thấy: với vùng nhỏ, đọc lại bản phóng to + tăng tương phản (vùng lớn bỏ qua để khỏi chậm)
+        if (bmp.width.toLong() * bmp.height <= ENHANCE_MAX_PX) {
+            val e = enhance(bmp)
+            try {
+                return scan(recognize(e), bmp, pats, ratio, 0.5)
+            } finally {
+                e.recycle()
+            }
         }
         return null
     }
@@ -193,6 +278,103 @@ object TemplateMatcher {
         return if (best < -1) null else Triple(bx, by, best)
     }
 
+    /** Các kênh màu của một ảnh (float 0..255) + độ sáng. */
+    private class Ch(val w: Int, val h: Int, val r: FloatArray, val g: FloatArray, val b: FloatArray, val y: FloatArray)
+
+    private fun channels(bm: Bitmap): Ch {
+        val w = bm.width
+        val h = bm.height
+        val px = IntArray(w * h)
+        bm.getPixels(px, 0, w, 0, 0, w, h)
+        val r = FloatArray(w * h)
+        val g = FloatArray(w * h)
+        val b = FloatArray(w * h)
+        val y = FloatArray(w * h)
+        for (i in px.indices) {
+            val q = px[i]
+            val rr = ((q shr 16) and 255).toFloat()
+            val gg = ((q shr 8) and 255).toFloat()
+            val bb = (q and 255).toFloat()
+            r[i] = rr; g[i] = gg; b[i] = bb
+            y[i] = 0.299f * rr + 0.587f * gg + 0.114f * bb
+        }
+        return Ch(w, h, r, g, b, y)
+    }
+
+    /** Mẫu đã trừ trung bình của một kênh; [ok] = false nếu kênh gần như phẳng (không có chi tiết để so). */
+    private class Tz(val z: FloatArray, val norm: Double, val ok: Boolean)
+
+    private fun tz(t: FloatArray): Tz {
+        var m = 0.0
+        for (v in t) m += v
+        m /= t.size
+        val z = FloatArray(t.size) { (t[it] - m).toFloat() }
+        var n = 0.0
+        for (v in z) n += v * v
+        n = sqrt(n)
+        return Tz(z, n, n > 2.0)
+    }
+
+    /** NCC của ô [tw]x[th] tại (ox, oy) trên kênh [src] (rộng [sw]) so với mẫu [t]. */
+    private fun nccAt(src: FloatArray, sw: Int, ox: Int, oy: Int, t: Tz, tw: Int, th: Int): Double {
+        var s = 0.0
+        var q = 0.0
+        var dot = 0.0
+        for (j in 0 until th) {
+            val ro = (oy + j) * sw + ox
+            val to = j * tw
+            for (i in 0 until tw) {
+                val v = src[ro + i].toDouble()
+                s += v; q += v * v; dot += v * t.z[to + i]
+            }
+        }
+        val n = tw * th
+        val vr = q - s * s / n
+        if (vr < 1e-3) return 0.0
+        return dot / (sqrt(vr) * t.norm)
+    }
+
+    private class Fin(val x: Int, val y: Int, val score: Double)
+
+    /**
+     * Tinh lần cuối ở độ phân giải ĐẦY ĐỦ quanh (gx, gy): chọn vị trí đúng từng điểm ảnh theo NCC độ sáng,
+     * rồi kiểm tra MÀU bằng NCC từng kênh R/G/B. Điểm cuối = min(độ sáng, màu trung bình)
+     * nên icon cùng hình khác màu không còn bị coi là giống.
+     */
+    private fun finalCheck(region: Bitmap, st: Bitmap, gx: Int, gy: Int, win: Int): Fin? {
+        val sw = st.width
+        val sh = st.height
+        val x0 = (gx - win).coerceIn(0, region.width - sw)
+        val y0 = (gy - win).coerceIn(0, region.height - sh)
+        val rw = min(region.width - x0, sw + 2 * win)
+        val rh = min(region.height - y0, sh + 2 * win)
+        if (rw < sw || rh < sh) return null
+        val sub = Bitmap.createBitmap(region, x0, y0, rw, rh)
+        val rc = channels(sub)
+        if (sub !== region) sub.recycle()
+        val tc = channels(st)
+        val ty = tz(tc.y)
+        if (!ty.ok) return null
+        var best = -2.0
+        var bx = 0
+        var by = 0
+        for (dy in 0..rh - sh) for (dx in 0..rw - sw) {
+            val v = nccAt(rc.y, rc.w, dx, dy, ty, sw, sh)
+            if (v > best) { best = v; bx = dx; by = dy }
+        }
+        if (best < -1) return null
+        var cs = 0.0
+        var cn = 0
+        for ((src, tch) in listOf(rc.r to tc.r, rc.g to tc.g, rc.b to tc.b)) {
+            val t = tz(tch)
+            if (!t.ok) continue
+            cs += nccAt(src, rc.w, bx, by, t, sw, sh)
+            cn++
+        }
+        val color = if (cn == 0) best else cs / cn
+        return Fin(x0 + bx, y0 + by, min(best, color))
+    }
+
     /** Hệ số thu nhỏ cho bước tìm thô: mẫu ~10px, và giới hạn khối lượng tính. */
     private fun coarseFactor(rw: Int, rh: Int, tw: Int, th: Int): Int {
         val tmin = min(tw, th)
@@ -210,6 +392,7 @@ object TemplateMatcher {
      * Tìm [tpl] trong [region], chấp nhận ảnh trong vùng quét có tỉ lệ khác ảnh mẫu.
      * 1) Thô: thử nhiều tỉ lệ (0.4x..2.5x) ở độ phân giải thấp, chọn tỉ lệ có điểm cao nhất.
      * 2) Tinh: quanh vị trí đó, thử thêm tỉ lệ lân cận (±6%) ở độ phân giải cao.
+     * 3) Cuối: định vị đúng từng điểm ảnh ở độ phân giải đầy đủ và kiểm tra thêm MÀU (NCC từng kênh R/G/B).
      */
     fun find(region: Bitmap, tpl: Bitmap, threshold: Double): Hit? {
         val rpx = Px(region)
@@ -244,8 +427,13 @@ object TemplateMatcher {
         val cx = bx * bs + bsw / 2
         val cy = by * bs + bsh / 2
 
-        var out: Hit? = null
         var outScore = -2.0
+        var ox = 0
+        var oy = 0
+        var ofs = 1
+        var osw = 0
+        var osh = 0
+        var ok = 0.0
         for (d in doubleArrayOf(1.0, 0.94, 1.06)) {
             val k = bestK * d
             val sw = (tpl.width * k).roundToInt()
@@ -267,12 +455,21 @@ object TemplateMatcher {
 
             val f = search(gray(sub, fs), gray(st, fs))
             if (st !== tpl) st.recycle()
+            if (sub !== region) sub.recycle()
             if (f == null) continue
             if (f.third > outScore) {
                 outScore = f.third
-                out = Hit(rx + f.first * fs + sw / 2, ry + f.second * fs + sh / 2, f.third, k)
+                ox = rx + f.first * fs; oy = ry + f.second * fs
+                ofs = fs; osw = sw; osh = sh; ok = k
             }
         }
-        return if (out != null && outScore >= threshold) out else null
+        if (osw == 0 || outScore < threshold - 0.1) return null
+
+        // Bước cuối: độ phân giải đầy đủ + kiểm tra màu (loại các kết quả khớp "hình dáng" nhưng sai màu)
+        val st = scaled(tpl, osw, osh)
+        val fin = finalCheck(region, st, ox, oy, min(ofs, 3) + 1)
+        if (st !== tpl) st.recycle()
+        if (fin == null || fin.score < threshold) return null
+        return Hit(fin.x + osw / 2, fin.y + osh / 2, fin.score, ok)
     }
 }

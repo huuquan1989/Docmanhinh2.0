@@ -149,6 +149,24 @@ object ChangeMatcher {
         return Snap(w, h, g)
     }
 
+    /** Điểm (x,y) coi là GIỐNG nếu khớp với một điểm lân cận trong vòng 1 px của ảnh kia (bỏ qua lệch nửa điểm ảnh do thu nhỏ). */
+    private fun nearSame(a: Snap, b: Snap, x: Int, y: Int, w: Int, h: Int): Boolean {
+        val va = a.g[y * w + x].toInt() and 255
+        val vb = b.g[y * w + x].toInt() and 255
+        for (dy in -1..1) {
+            val yy = y + dy
+            if (yy < 0 || yy >= h) continue
+            for (dx in -1..1) {
+                val xx = x + dx
+                if (xx < 0 || xx >= w) continue
+                val k = yy * w + xx
+                if (abs(va - (b.g[k].toInt() and 255)) <= PIX_TOL) return true
+                if (abs(vb - (a.g[k].toInt() and 255)) <= PIX_TOL) return true
+            }
+        }
+        return false
+    }
+
     /** Kết quả so hình: [score] 0..1 và tâm chỗ đổi nhiều nhất (toạ độ trong ảnh xám). */
     private class Diff(val score: Double, val cx: Int, val cy: Int)
 
@@ -174,7 +192,7 @@ object ChangeMatcher {
             val by = (y / bs) * bw
             for (x in 0 until w) {
                 val d = (a.g[row + x].toInt() and 255) - (b.g[row + x].toInt() and 255)
-                if (abs(d) > PIX_TOL) {
+                if (abs(d) > PIX_TOL && !nearSame(a, b, x, y, w, h)) {
                     total++
                     val k = by + x / bs
                     cnt[k]++; sx[k] += x.toLong(); sy[k] += y.toLong()
@@ -249,7 +267,7 @@ object ChangeMatcher {
             var px = bx.l + bx.w / 2
             var py = bx.t + bx.h / 2
             if (isText) {
-                d = textDiff(e.text, TextMatcher.readNorm(crop))
+                d = textDiff(TextMatcher.fold(e.text), TextMatcher.fold(TextMatcher.readNorm(crop)))
             } else {
                 val df = imageDiff(e.snap, snap(crop))
                 d = df.score
