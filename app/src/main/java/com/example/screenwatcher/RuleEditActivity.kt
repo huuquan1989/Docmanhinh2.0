@@ -41,6 +41,8 @@ class RuleEditActivity : Activity() {
     private lateinit var changeMode: Spinner
     private lateinit var diffThr: EditText
     private lateinit var baseTv: TextView
+    private lateinit var thenSp: Spinner
+    private var profiles: List<Profile> = emptyList()
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -169,6 +171,18 @@ class RuleEditActivity : Activity() {
         })
         root.addView(btn("Chỉnh điểm chạm/vuốt trên màn hình (giữ để thêm 1, 2, 3…)") { pick("ACTIONS") })
 
+        root.addView(label("Sau khi chạy xong thao tác: nạp và chạy cả bộ luật đã lưu (thay thế các luật đang dùng)"))
+        profiles = ProfileStore.list(this)
+        thenSp = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@RuleEditActivity, android.R.layout.simple_spinner_dropdown_item,
+                listOf("(Không chạy bộ luật nào)") + profiles.map { "📂 ${it.name} (${it.ruleCount} luật)" },
+            )
+            val at = profiles.indexOfFirst { it.id == rule.thenProfile }
+            setSelection(if (at >= 0) at + 1 else 0)
+        }
+        root.addView(thenSp)
+
         root.addView(label("Sau khi chạy hết thao tác, lặp lại tổng cộng (lần). 1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi"))
         repeatEt = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.repeatCount.toString())
@@ -252,6 +266,7 @@ class RuleEditActivity : Activity() {
         rule.cooldownMs = cool.text.toString().toLongOrNull() ?: 3000L
         rule.repeatCount = (repeatEt.text.toString().toIntOrNull() ?: 1).coerceIn(0, 100_000)
         rule.repeatDelayMs = (repeatDelayEt.text.toString().toLongOrNull() ?: 500L).coerceAtLeast(0)
+        rule.thenProfile = profiles.getOrNull(thenSp.selectedItemPosition - 1)?.id ?: ""
     }
 
     /** Lưu luật rồi giao cho CaptureService hiện lớp phủ chọn trên màn hình thật. */

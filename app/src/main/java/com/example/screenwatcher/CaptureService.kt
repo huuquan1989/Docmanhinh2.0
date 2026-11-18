@@ -55,6 +55,11 @@ class CaptureService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val main = Handler(Looper.getMainLooper())
+    private var testOv: TestOverlay? = null
+    /** Lúc bắt đầu theo dõi (elapsedRealtime) để tính giới hạn "tự dừng sau N phút". */
+    private var monitorStartAt = 0L
+    /** Phút (epoch) cuối cùng đã xét hẹn giờ; 0 = chưa xét lần nào. */
+    private var lastSchedMin = 0L
     private var projection: MediaProjection? = null
     private var vd: VirtualDisplay? = null
     private var reader: ImageReader? = null
@@ -93,7 +98,10 @@ class CaptureService : Service() {
     private fun setMonitoring(on: Boolean) {
         val was = AppState.monitoring
         AppState.monitoring = on && projection != null
-        if (AppState.monitoring && !was) { seqIndex = 0; seqCycle = 0; seqLogged = -1; ChangeMatcher.resetLatches() }
+        if (AppState.monitoring && !was) {
+            seqIndex = 0; seqCycle = 0; seqLogged = -1; ChangeMatcher.resetLatches()
+            monitorStartAt = SystemClock.elapsedRealtime()
+        }
         if (!AppState.monitoring) AppState.seqStatus = ""
         getSystemService(NotificationManager::class.java).notify(1, notif())
         AppState.log(if (AppState.monitoring) "▶ Bắt đầu theo dõi" else "⏸ Dừng theo dõi")
@@ -101,10 +109,17 @@ class CaptureService : Service() {
     }
 
     /** Nạp một bộ luật đã lưu; [run] = true thì chạy theo dõi luôn (bắt đầu lại từ luật đầu). */
-    private fun loadProfile(id: String, run: Boolean) {
+    private fun loadProfile(id: String, run: Boolean, merge: Boolean = false) {
         val name = ProfileStore.list(this).firstOrNull { it.id == id }?.name
-        if (name == null || !ProfileStore.load(this, id)) {
+        if (name == null || !ProfileStore.load(this, id, merge)) {
             Toast.makeText(this, "Không nạp được bộ luật", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (merge) {
+            // gộp thêm: giữ nguyên các luật đang chạy, bộ luật mới tham gia từ lần quét kế tiếp
+            AppState.log("➕ Đã gộp bộ luật '$name' (chạy song song)")
+            Toast.makeText(this, "Đã gộp '$name' — các bộ luật chạy song song", Toast.LENGTH_SHORT).show()
+            fab?.refresh()
             return
         }
         lastFire.clear()
@@ -139,6 +154,7 @@ class CaptureService : Service() {
             },
             onTestRule = { quickTest(it) },
             onRunProfile = { id -> fab?.collapse(); loadProfile(id, false) },
+            onMergeProfile = { id -> fab?.collapse(); loadProfile(id, false, merge = true) },
             onHideButton = {
                 RuleStore.setBubbleOn(this, false)
                 fab?.hide()
@@ -220,9 +236,56 @@ class CaptureService : Service() {
 
     /* ---------------- vòng lặp quét ---------------- */
 
+    /**
+     * Hẹn giờ: tự bắt đầu / tự dừng theo giờ trong ngày (lặp mỗi ngày) và tự dừng sau N phút.
+     * Xét theo từng phút đã trôi qua kể từ lần kiểm tra trước, nên không bỏ lỡ giờ hẹn dù vòng quét bị trễ.
+     * Chỉ chạy khi dịch vụ đang sống (thông báo "Đang theo dõi/Sẵn sàng" còn hiện).
+     */
+    private fun checkSchedule() {
+        val lim = RuleStore.autoStopMin(this)
+        if (AppState.monitoring && lim > 0 && SystemClock.elapsedRealtime() - monitorStartAt >= lim * 60_000L) {
+            AppState.log("⏱ Đã chạy đủ $lim phút, tự dừng theo dõi")
+            main.post { setMonitoring(false) }
+            return
+        }
+        val onStart = RuleStore.schedStartOn(this)
+        val onStop = RuleStore.schedStopOn(this)
+        val nowMin = System.currentTimeMillis() / 60_000L
+        if (lastSchedMin == 0L) lastSchedMin = nowMin - 1
+        if (nowMin <= lastSchedMin) return
+        val from = maxOf(lastSchedMin + 1, nowMin - 1440) // tối đa xét lại 1 ngày
+        lastSchedMin = nowMin
+        if (!onStart && !onStop) return
+        val tz = java.util.TimeZone.getDefault()
+        val startAt = RuleStore.schedStartMin(this)
+        val stopAt = RuleStore.schedStopMin(this)
+        var act = 0 // 1 = bắt đầu, 2 = dừng; lấy giờ hẹn muộn nhất trong khoảng vừa qua
+        for (m in from..nowMin) {
+            val ms = m * 60_000L
+            val md = (((ms + tz.getOffset(ms)) / 60_000L) % 1440L).toInt().let { if (it < 0) it + 1440 else it }
+            if (onStop && md == stopAt) act = 2
+            if (onStart && md == startAt) act = 1
+        }
+        when (act) {
+            1 -> if (!AppState.monitoring) {
+                if (projection == null) {
+                    AppState.log("⚠ Hẹn giờ: tới giờ bắt đầu nhưng chưa cấp quyền chụp màn hình nên không tự chạy được")
+                } else {
+                    AppState.log("⏰ Tới giờ hẹn, tự bắt đầu theo dõi")
+                    main.post { setMonitoring(true) }
+                }
+            }
+            2 -> if (AppState.monitoring) {
+                AppState.log("⏰ Tới giờ hẹn, tự dừng theo dõi")
+                main.post { setMonitoring(false) }
+            }
+        }
+    }
+
     private suspend fun runLoop() {
         while (currentCoroutineContext().isActive) {
             try {
+                checkSchedule()
                 if (AppState.monitoring && !AppState.picking) {
                     setupDisplay()
                     tick()
@@ -247,6 +310,7 @@ class CaptureService : Service() {
             AppState.log("✔ '${rule.name}' ${hitText(rule, hit)}")
             Macro.runRule(rule, hit.x, hit.y)
             lastFire[rule.id] = SystemClock.elapsedRealtime()
+            chain(rule) // có đặt "chạy cả bộ luật" thì chuyển bộ luật
             break // chụp lại khung mới rồi mới xét tiếp
         }
     }
@@ -255,6 +319,22 @@ class CaptureService : Service() {
      * Chế độ tuần tự: chờ luật 1 khớp -> chạy macro -> chờ luật 2 ... -> hết luật thì tính là xong 1 vòng,
      * rồi lặp lại theo số vòng đã đặt (0 = mãi mãi). Chỉ các luật đang bật mới tham gia, theo thứ tự trong danh sách.
      */
+    /**
+     * Luật vừa chạy xong macro: nếu có đặt "chạy cả bộ luật" thì nạp bộ luật đó (thay thế) và chạy từ đầu.
+     * Trả true nếu đã chuyển bộ luật (vòng quét hiện tại cần dừng ngay).
+     */
+    private fun chain(rule: Rule): Boolean {
+        if (rule.thenProfile.isEmpty() || !AppState.monitoring) return false
+        val p = ProfileStore.list(this).firstOrNull { it.id == rule.thenProfile }
+        if (p == null) {
+            AppState.log("⚠ '${rule.name}': bộ luật kế tiếp không còn tồn tại, bỏ qua")
+            return false
+        }
+        AppState.log("➡ '${rule.name}' xong -> chạy bộ luật '${p.name}'")
+        main.post { loadProfile(p.id, true) } // Toast/giao diện phải chạy trên luồng chính
+        return true
+    }
+
     private suspend fun tickSequence(frame: Bitmap) {
         val rules = RuleStore.load(this).filter { it.enabled }
         if (rules.isEmpty()) return
@@ -271,6 +351,7 @@ class CaptureService : Service() {
         AppState.log("✔ [${seqIndex + 1}/${rules.size}] '${rule.name}' ${hitText(rule, hit)}")
         Macro.runRule(rule, hit.x, hit.y)
         if (!AppState.monitoring) return
+        if (chain(rule)) return
         seqIndex++
         seqLogged = -1
         if (seqIndex >= rules.size) {
@@ -346,6 +427,33 @@ class CaptureService : Service() {
     /* ---------------- thử một luật ---------------- */
 
     /** Thử nhanh một luật từ bảng nút nổi: ẩn bảng + nút, chờ 0,8 giây rồi quét, báo kết quả (chưa chạy macro). */
+    /** Gom dữ liệu để vẽ kết quả Thử lên màn hình. */
+    private fun buildViz(rule: Rule, hit: Hit?, frame: Bitmap, msg: String): TestViz {
+        val change = rule.type == Rule.CHANGE
+        val regs: List<RegionViz> = if (change) ChangeMatcher.lastDebug else {
+            val rs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
+            rs.map { RegionViz(android.graphics.Rect(it.l, it.t, it.r, it.b), null, "", emptyList()) }
+        }
+        var box: android.graphics.Rect? = null
+        if (hit != null && rule.type == Rule.IMAGE) {
+            val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(RuleStore.templateFile(this, rule.id).path, o)
+            if (o.outWidth > 0) {
+                val hw = (o.outWidth * hit.scale / 2).toInt()
+                val hh = (o.outHeight * hit.scale / 2).toInt()
+                box = android.graphics.Rect(hit.x - hw, hit.y - hh, hit.x + hw, hit.y + hh)
+            }
+        }
+        val th = if (change) rule.diffThreshold else rule.threshold
+        return TestViz("Thử '${rule.name}'", regs, hit, box, "Thử '${rule.name}': $msg", th, change)
+    }
+
+    private fun showViz(viz: TestViz) {
+        if (!Settings.canDrawOverlays(this)) return
+        testOv?.hide()
+        testOv = TestOverlay(this).also { it.show(viz) }
+    }
+
     private fun quickTest(id: String) {
         val rule = RuleStore.get(this, id) ?: return
         fab?.hide()
@@ -361,14 +469,9 @@ class CaptureService : Service() {
                 else -> missText(rule)
             }
             AppState.log("Thử nhanh '${rule.name}': $msg")
+            val viz = if (frame != null) buildViz(rule, hit, frame, msg) else null
             main.post {
-                Toast.makeText(this@CaptureService, "'${rule.name}': $msg", Toast.LENGTH_LONG).show()
-                if (hit != null) {
-                    // vòng tròn đánh dấu chỗ khớp (cần bật Dịch vụ trợ năng và hiệu ứng chạm)
-                    val x = hit.x.toFloat()
-                    val y = hit.y.toFloat()
-                    AutoClickService.instance?.flash("tap", x, y, x, y, 900L, "✔")
-                }
+                if (viz != null) showViz(viz) else Toast.makeText(this@CaptureService, "'${rule.name}': $msg", Toast.LENGTH_LONG).show()
                 showBubble()
             }
         }
@@ -388,7 +491,10 @@ class CaptureService : Service() {
                 else -> missText(rule)
             }
             AppState.log("Thử '${rule.name}': $msg")
-            main.post { Toast.makeText(this@CaptureService, "Thử '${rule.name}': $msg", Toast.LENGTH_LONG).show() }
+            val viz = if (frame != null) buildViz(rule, hit, frame, msg) else null
+            main.post {
+                if (viz != null) showViz(viz) else Toast.makeText(this@CaptureService, "Thử '${rule.name}': $msg", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -558,6 +664,7 @@ class CaptureService : Service() {
     }
 
     override fun onDestroy() {
+        testOv?.hide()
         teardown()
         scope.cancel()
         super.onDestroy()

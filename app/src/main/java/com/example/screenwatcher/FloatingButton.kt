@@ -36,6 +36,7 @@ class FloatingButton(
     private val onHideButton: () -> Unit,
     private val onTestRule: (String) -> Unit,
     private val onRunProfile: (String) -> Unit,
+    private val onMergeProfile: (String) -> Unit,
 ) {
     private companion object {
         const val BUBBLE = 48   // dp
@@ -223,7 +224,7 @@ class FloatingButton(
     /** Danh sách bộ luật đã lưu: chạm một tên để nạp (không chạy luôn, bấm Run để chạy). */
     private fun buildProfilePanel() {
         panel.addView(TextView(c).apply {
-            text = "Bộ luật đã lưu — chạm để nạp (chưa chạy)"; setTextColor(0xFFBBBBBB.toInt()); textSize = 12f
+            text = "Chạm tên: nạp thay thế (chưa chạy). Chạm ➕: gộp thêm để canh nhiều app cùng lúc."; setTextColor(0xFFBBBBBB.toInt()); textSize = 12f
             setPadding(0, 0, 0, dp(4))
         })
         val profiles = ProfileStore.list(ctx)
@@ -235,8 +236,17 @@ class FloatingButton(
             })
         }
         for (p in profiles) {
-            list.addView(
+            val prow = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+            prow.addView(
                 action("📂 ${p.name} (${p.ruleCount})") { onRunProfile(p.id) },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            prow.addView(
+                action("➕") { onMergeProfile(p.id) },
+                LinearLayout.LayoutParams(dp(44), LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(4) },
+            )
+            list.addView(
+                prow,
                 LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .apply { bottomMargin = dp(4) },
             )

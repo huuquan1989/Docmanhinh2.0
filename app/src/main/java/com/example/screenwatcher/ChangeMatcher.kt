@@ -2,6 +2,7 @@ package com.example.screenwatcher
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Rect
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -18,7 +19,16 @@ import kotlin.math.min
  * điểm nào lệch quá ngưỡng là "khác". Điểm số lấy theo cả vùng lẫn từng khối cục bộ (icon nhỏ đổi chỗ vẫn bắt được),
  * và trả luôn tâm chỗ đổi. Chạy macro, Thử, dừng/chạy lại đều KHÔNG đổi ảnh gốc. Không dùng thư viện ngoài.
  */
+/** Một khối nhỏ có thay đổi (toạ độ màn hình) và tỉ lệ điểm ảnh khác trong khối đó. */
+class BlockViz(val rect: Rect, val fill: Double)
+
+/** Kết quả so sánh của MỘT vùng, dùng để vẽ lên màn hình khi bấm Thử. */
+class RegionViz(val box: Rect, val score: Double?, val note: String, val blocks: List<BlockViz>)
+
 object ChangeMatcher {
+    /** Kết quả chi tiết của lần [detect] gần nhất ở chế độ test (để vẽ trực quan). */
+    @Volatile var lastDebug: List<RegionViz> = emptyList()
+
     private const val MAX_DIM = 720       // cạnh dài nhất của ảnh xám khi so sánh hình (giữ đủ chi tiết cho icon)
     private const val PIX_TOL = 30        // điểm ảnh lệch quá mức này (0..255) mới tính là khác
 
@@ -168,7 +178,7 @@ object ChangeMatcher {
     }
 
     /** Kết quả so hình: [score] 0..1 và tâm chỗ đổi nhiều nhất (toạ độ trong ảnh xám). */
-    private class Diff(val score: Double, val cx: Int, val cy: Int)
+    private class Diff(val score: Double, val cx: Int, val cy: Int, val blocks: List<IntArray> = emptyList())
 
     /**
      * Trừ ảnh hiện tại cho ảnh mốc. Điểm = lớn hơn trong hai số:
@@ -203,12 +213,14 @@ object ChangeMatcher {
         var best = 0.0
         var bi = -1
         var bj = -1
+        val blocks = ArrayList<IntArray>()
         for (j in 0 until bh) for (i in 0 until bw) {
             val c = cnt[j * bw + i]
             if (c < minPix) continue
             val area = min(bs, w - i * bs) * min(bs, h - j * bs)
             if (area * 2 < bs * bs) continue
             val f = c.toDouble() / area
+            blocks.add(intArrayOf(i * bs, j * bs, min(w, i * bs + bs), min(h, j * bs + bs), (f * 100).toInt()))
             if (f > best) { best = f; bi = i; bj = j }
         }
         if (bi < 0) return Diff(0.0, w / 2, h / 2)
@@ -220,7 +232,7 @@ object ChangeMatcher {
             n += cnt[k]; tx += sx[k]; ty += sy[k]
         }
         val score = max(total.toDouble() / (w * h), best).coerceIn(0.0, 1.0)
-        return Diff(score, (tx / n).toInt(), (ty / n).toInt())
+        return Diff(score, (tx / n).toInt(), (ty / n).toInt(), blocks)
     }
 
     /** Tỉ lệ ký tự khác nhau (khoảng cách Levenshtein / độ dài lớn hơn), 0..1. */
@@ -247,6 +259,8 @@ object ChangeMatcher {
      * không đổi trạng thái "đã báo" (dùng cho nút Thử).
      */
     suspend fun detect(c: Context, rule: Rule, frame: Bitmap, test: Boolean = false): Hit? {
+        if (test) lastDebug = emptyList()
+        val dbg = if (test) ArrayList<RegionViz>() else null
         if (rule.regions.isEmpty()) {
             warnOnce("noreg:${rule.id}", "⚠ '${rule.name}': chưa khoanh vùng nào (vùng khoanh chính là ảnh gốc)")
             return null
@@ -260,7 +274,11 @@ object ChangeMatcher {
         var used = 0
         for (rg in rule.regions) {
             val bx = clamp(rg, frame) ?: continue
-            val e = base?.entries?.firstOrNull { it.key == key(rg) && it.fw == frame.width && it.fh == frame.height } ?: continue
+            val e = base?.entries?.firstOrNull { it.key == key(rg) && it.fw == frame.width && it.fh == frame.height }
+            if (e == null) {
+                dbg?.add(RegionViz(Rect(bx.l, bx.t, bx.r, bx.b), null, "chưa có ảnh gốc", emptyList()))
+                continue
+            }
             used++
             val crop = Bitmap.createBitmap(frame, bx.l, bx.t, bx.w, bx.h)
             var d: Double
@@ -275,9 +293,11 @@ object ChangeMatcher {
                 py = bx.t + df.cy * bx.h / e.snap.h
             }
             if (crop !== frame) crop.recycle()
+            dbg?.add(RegionViz(Rect(bx.l, bx.t, bx.r, bx.b), d, note, vb))
             if (d > maxD) maxD = d
             if (d >= rule.diffThreshold && d > bestD) { bestD = d; hx = px; hy = py }
         }
+        if (dbg != null) lastDebug = dbg
         if (used == 0) {
             warnOnce(
                 "noimg:${rule.id}",

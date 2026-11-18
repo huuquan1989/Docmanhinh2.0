@@ -60,22 +60,26 @@ object ProfileStore {
         return Profile(id, clean, now, rules.size)
     }
 
-    /** Nạp bộ luật: thay toàn bộ luật + ảnh mẫu + cài đặt hiện tại bằng nội dung đã lưu. */
-    fun load(c: Context, id: String): Boolean {
+    /**
+     * Nạp bộ luật. [merge] = false: thay toàn bộ luật + ảnh mẫu + cài đặt hiện tại bằng nội dung đã lưu.
+     * [merge] = true: GỘP thêm vào các luật đang có (để canh nhiều app cùng lúc), giữ nguyên luật cũ,
+     * tên luật gắn thêm [tên bộ luật] và tự chuyển sang chạy song song (tắt chế độ tuần tự).
+     */
+    fun load(c: Context, id: String, merge: Boolean = false): Boolean {
         val o = readJson(c, id) ?: return false
         val a = o.optJSONArray("rules") ?: JSONArray()
         val rules = runCatching { List(a.length()) { Rule.from(a.getJSONObject(it)) } }.getOrNull() ?: return false
 
-        // xoá ảnh mẫu của bộ luật đang dùng rồi chép ảnh mẫu của bộ luật được chọn
-        (c.filesDir.listFiles() ?: emptyArray())
+        // xoá ảnh mẫu của bộ luật đang dùng (trừ khi gộp) rồi chép ảnh mẫu của bộ luật được chọn
+        if (!merge) (c.filesDir.listFiles() ?: emptyArray())
             .filter { it.name.startsWith("tpl_") && it.name.endsWith(".png") }
             .forEach { it.delete() }
         (dir(c, id).listFiles() ?: emptyArray())
             .filter { it.name.startsWith("tpl_") && it.name.endsWith(".png") }
             .forEach { it.copyTo(File(c.filesDir, it.name), overwrite = true) }
 
-        // mốc gốc "thay đổi" đi theo bộ luật
-        (c.filesDir.listFiles() ?: emptyArray())
+        // ảnh gốc "thay đổi" đi theo bộ luật
+        if (!merge) (c.filesDir.listFiles() ?: emptyArray())
             .filter { it.name.startsWith("base_") && it.name.endsWith(".bin") }
             .forEach { it.delete() }
         (dir(c, id).listFiles() ?: emptyArray())
@@ -83,6 +87,14 @@ object ProfileStore {
             .forEach { it.copyTo(File(c.filesDir, it.name), overwrite = true) }
 
         rules.forEach { it.enabled = true } // nạp bộ luật xong thì mọi luật đều được tích sẵn, chờ chạy
+        if (merge) {
+            val tag = o.optString("name", "").trim()
+            if (tag.isNotEmpty()) rules.forEach { if (!it.name.endsWith("[$tag]")) it.name = "${it.name} [$tag]" }
+            val ids = rules.map { it.id }.toSet()
+            RuleStore.saveAll(c, RuleStore.load(c).filter { it.id !in ids } + rules)
+            RuleStore.setSeqOn(c, false) // nhiều bộ luật cùng canh: chạy song song
+            return true
+        }
         RuleStore.saveAll(c, rules)
         RuleStore.setSeqOn(c, o.optBoolean("seqOn", false))
         RuleStore.setSeqCycles(c, o.optInt("seqCycles", 1))

@@ -39,13 +39,15 @@ data class Rule(
     var changeMode: String = CH_IMAGE,
     /** Kiểu CHANGE: vùng khác so với lúc đầu từ mức này (0.01..1.0) trở lên thì tính là có thay đổi. */
     var diffThreshold: Double = 0.10,
+    /** Khi luật chạy xong macro: nạp rồi chạy cả bộ luật đã lưu có id này ("" = không). */
+    var thenProfile: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("type", type).put("text", text)
         .put("fuzzy", fuzzy).put("threshold", threshold).put("macro", macro)
         .put("cooldownMs", cooldownMs).put("enabled", enabled)
         .put("repeatCount", repeatCount).put("repeatDelayMs", repeatDelayMs)
-        .put("changeMode", changeMode).put("diffThreshold", diffThreshold)
+        .put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
         .put("regions", JSONArray().also { a -> regions.forEach { a.put(it.toJson()) } })
 
     companion object {
@@ -75,6 +77,7 @@ data class Rule(
                 repeatDelayMs = o.optLong("repeatDelayMs", 500),
                 changeMode = o.optString("changeMode", CH_IMAGE),
                 diffThreshold = o.optDouble("diffThreshold", 0.10),
+                thenProfile = o.optString("thenProfile", ""),
             )
         }
     }
@@ -125,6 +128,20 @@ object RuleStore {
     /** Hiện hiệu ứng chạm / vuốt trên màn hình khi macro chạy. */
     fun feedbackOn(c: Context): Boolean = prefs(c).getBoolean("feedback", true)
     fun setFeedbackOn(c: Context, on: Boolean) = prefs(c).edit().putBoolean("feedback", on).apply()
+
+    /* ---- hẹn giờ & giới hạn ---- */
+    /** Giờ tự bắt đầu / tự dừng tính bằng số phút từ 00:00; *On = có bật hay không. */
+    fun schedStartOn(c: Context) = prefs(c).getBoolean("schedStartOn", false)
+    fun schedStartMin(c: Context) = prefs(c).getInt("schedStartMin", 8 * 60)
+    fun schedStopOn(c: Context) = prefs(c).getBoolean("schedStopOn", false)
+    fun schedStopMin(c: Context) = prefs(c).getInt("schedStopMin", 18 * 60)
+    fun setSchedStart(c: Context, on: Boolean, min: Int) =
+        prefs(c).edit().putBoolean("schedStartOn", on).putInt("schedStartMin", min.coerceIn(0, 1439)).apply()
+    fun setSchedStop(c: Context, on: Boolean, min: Int) =
+        prefs(c).edit().putBoolean("schedStopOn", on).putInt("schedStopMin", min.coerceIn(0, 1439)).apply()
+    /** Tự dừng theo dõi sau bấy nhiêu phút kể từ lúc bắt đầu (0 = không giới hạn). */
+    fun autoStopMin(c: Context) = prefs(c).getInt("autoStopMin", 0)
+    fun setAutoStopMin(c: Context, n: Int) = prefs(c).edit().putInt("autoStopMin", n.coerceIn(0, 100_000)).apply()
 
     fun interval(c: Context): Long = prefs(c).getLong("interval", 700L)
     fun setInterval(c: Context, ms: Long) = prefs(c).edit().putLong("interval", ms.coerceIn(150L, 10_000L)).apply()
