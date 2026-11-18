@@ -55,9 +55,9 @@ class SelectorOverlay(
         LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_LAYOUT_IN_SCREEN or LayoutParams.FLAG_LAYOUT_NO_LIMITS,
     )
     private val barLp = params(
-        LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+        LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
         LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
-    ).apply { y = 120 }
+    ).apply { y = 100 }
 
     private fun params(w: Int, h: Int, g: Int, flags: Int) = LayoutParams(
         w, h, LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT,
@@ -71,31 +71,22 @@ class SelectorOverlay(
     private fun toast(s: String) = Toast.makeText(ctx, s, Toast.LENGTH_SHORT).show()
 
     fun show() {
-        val hint = TextView(ctx).apply {
-            text = when (mode) {
-                "REGIONS" -> "Kéo để chọn vùng (nhiều vùng). Kéo cạnh/góc để chỉnh, kéo bên trong để dời"
-                "TEMPLATE" -> "Kéo để khoanh hình cần nhận diện. Kéo cạnh/góc để chỉnh, kéo bên trong để dời"
-                "SWIPE" -> "Kéo từ điểm bắt đầu đến điểm kết thúc của cú vuốt"
-                else -> "Chạm vào vị trí cần tự động chạm"
-            }
-            setTextColor(Color.WHITE)
-            setBackgroundColor(0xCC000000.toInt())
-            setPadding(24, 12, 24, 12)
-            gravity = Gravity.CENTER
-        }
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xCC000000.toInt())
         }
         val toggle = Button(ctx)
+        fun add(b: View) = row.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         fun mk(t: String, f: () -> Unit) = Button(ctx).apply {
             text = t; isAllCaps = false; textSize = 13f
-            minWidth = 0; minimumWidth = 0; setPadding(8, 0, 8, 0)
+            minWidth = 0; minimumWidth = 0
+            setPadding((4 * ctx.resources.displayMetrics.density).toInt(), 0, (4 * ctx.resources.displayMetrics.density).toInt(), 0)
             setOnClickListener { f() }
         }
         toggle.apply {
             text = "✋ Thao tác"; isAllCaps = false; textSize = 13f
-            minWidth = 0; minimumWidth = 0; setPadding(8, 0, 8, 0)
+            minWidth = 0; minimumWidth = 0
+            setPadding((4 * ctx.resources.displayMetrics.density).toInt(), 0, (4 * ctx.resources.displayMetrics.density).toInt(), 0)
             setOnClickListener {
                 drawing = !drawing
                 dvLp.flags = if (drawing) dvLp.flags and LayoutParams.FLAG_NOT_TOUCHABLE.inv()
@@ -105,13 +96,12 @@ class SelectorOverlay(
                 toast(if (drawing) "Đang ở chế độ vẽ" else "Có thể chuyển sang ứng dụng/màn hình khác, xong bấm ✏ Vẽ")
             }
         }
-        row.addView(mk("✔ Xong") { done() })
-        row.addView(toggle)
-        row.addView(mk("⌫ Xoá") { rects.clear(); cur = null; point = null; sw1 = null; sw2 = null; dv.invalidate() })
-        row.addView(mk("✖ Huỷ") { hide(); onCancel() })
-        row.addView(mk("▾ Ẩn") { setBarVisible(false) })
+        add(mk("✔ Xong") { done() })
+        add(toggle)
+        add(mk("⌫ Xoá") { rects.clear(); cur = null; point = null; sw1 = null; sw2 = null; dv.invalidate() })
+        add(mk("✖ Huỷ") { hide(); onCancel() })
+        add(mk("▾ Ẩn") { setBarVisible(false) })
         bar.orientation = LinearLayout.VERTICAL
-        bar.addView(hint)
         bar.addView(row)
 
         wm.addView(dv, dvLp)
