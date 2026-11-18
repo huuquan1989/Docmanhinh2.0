@@ -80,7 +80,7 @@ class TestOverlay(private val ctx: Context) {
     }
 
     private class Viz(ctx: Context, private val v: TestViz, private val d: Float, private val sd: Float) : View(ctx) {
-        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3 * d }
+        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.2f * d }
         private val fill = Paint().apply { style = Paint.Style.FILL }
         private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13 * sd; color = Color.WHITE }
         private val labelBg = Paint().apply { style = Paint.Style.FILL }
@@ -119,10 +119,10 @@ class TestOverlay(private val ctx: Context) {
             stroke.color = 0xFF00E676.toInt()
             val hb = v.hitBox
             if (hb != null) c.drawRect(hb, stroke)
-            val r = 22 * d
+            val r = 10 * d
             c.drawCircle(h.x.toFloat(), h.y.toFloat(), r, stroke)
-            c.drawLine(h.x - r * 1.6f, h.y.toFloat(), h.x + r * 1.6f, h.y.toFloat(), stroke)
-            c.drawLine(h.x.toFloat(), h.y - r * 1.6f, h.x.toFloat(), h.y + r * 1.6f, stroke)
+            c.drawLine(h.x - r * 1.7f, h.y.toFloat(), h.x + r * 1.7f, h.y.toFloat(), stroke)
+            c.drawLine(h.x.toFloat(), h.y - r * 1.7f, h.x.toFloat(), h.y + r * 1.7f, stroke)
         }
     }
 }

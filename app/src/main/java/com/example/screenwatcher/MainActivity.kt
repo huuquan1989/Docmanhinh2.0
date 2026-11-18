@@ -2,7 +2,6 @@ package com.example.screenwatcher
 
 import android.Manifest
 import android.app.AlertDialog
-import android.app.TimePickerDialog
 import android.content.Intent
 import android.graphics.Color
 import android.media.projection.MediaProjectionManager
@@ -42,7 +41,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var feedbackSwitch: Switch
     private lateinit var cyclesEt: EditText
     private lateinit var intervalEt: EditText
-    private lateinit var autoStopEt: EditText
     private var updating = false
     private val h = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
@@ -170,34 +168,6 @@ class MainActivity : ComponentActivity() {
         iv.addView(intervalEt)
         root.addView(iv)
 
-        root.addView(TextView(this).apply {
-            text = "Hẹn giờ & giới hạn (lặp mỗi ngày)"; textSize = 16f; setTextColor(Color.BLACK); setPadding(0, dp(12), 0, dp(2))
-        })
-        root.addView(
-            schedRow("Tự bắt đầu lúc", RuleStore.schedStartOn(this), RuleStore.schedStartMin(this)) { on, m ->
-                RuleStore.setSchedStart(this, on, m)
-            },
-        )
-        root.addView(
-            schedRow("Tự dừng lúc", RuleStore.schedStopOn(this), RuleStore.schedStopMin(this)) { on, m ->
-                RuleStore.setSchedStop(this, on, m)
-            },
-        )
-        val asr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        asr.addView(TextView(this).apply { text = "Tự dừng sau (phút, 0 = không): " })
-        autoStopEt = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(RuleStore.autoStopMin(this@MainActivity).toString())
-            minEms = 4
-        }
-        asr.addView(autoStopEt)
-        root.addView(asr)
-        root.addView(TextView(this).apply {
-            text = "Hẹn giờ cần dịch vụ đang chạy (thông báo còn hiện) và đã cấp quyền chụp màn hình. " +
-                "Tự bắt đầu sẽ không chạy được nếu máy đã khởi động lại hoặc dịch vụ bị tắt."
-            textSize = 11f; setTextColor(0xFF666666.toInt())
-        })
-
         root.addView(btn("💾 Lưu luật hiện tại thành bộ luật mới") { saveProfile() })
         profileDropdown = btn("") { dropdownOpen = !dropdownOpen; rebuildProfiles() }
         root.addView(profileDropdown)
@@ -222,34 +192,7 @@ class MainActivity : ComponentActivity() {
         setContentView(ScrollView(this).apply { addView(root) })
     }
 
-    private fun hhmm(min: Int) = "%02d:%02d".format(min / 60, min % 60)
-
-    /** Một dòng hẹn giờ: ô tích bật/tắt + nút chọn giờ (HH:mm). */
-    private fun schedRow(
-        label: String, on: Boolean, min: Int, save: (Boolean, Int) -> Unit,
-    ): LinearLayout {
-        var curOn = on
-        var curMin = min
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val cb = CheckBox(this).apply {
-            text = label; isChecked = on
-            setOnCheckedChangeListener { _, v -> curOn = v; save(curOn, curMin) }
-        }
-        row.addView(cb, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val b = Button(this).apply { text = hhmm(min) }
-        b.setOnClickListener {
-            TimePickerDialog(this, { _, hh, mm ->
-                curMin = hh * 60 + mm
-                b.text = hhmm(curMin)
-                save(curOn, curMin)
-            }, curMin / 60, curMin % 60, true).show()
-        }
-        row.addView(b)
-        return row
-    }
-
     private fun saveInterval() {
-        autoStopEt.text.toString().toIntOrNull()?.let { RuleStore.setAutoStopMin(this, it) }
         intervalEt.text.toString().toLongOrNull()?.let { RuleStore.setInterval(this, it) }
         cyclesEt.text.toString().toIntOrNull()?.let { RuleStore.setSeqCycles(this, it) }
     }

@@ -135,7 +135,7 @@ class SelectorOverlay(
 
     private inner class DrawView(c: Context) : View(c) {
         private val fill = Paint().apply { color = 0x3300AAFF; style = Paint.Style.FILL }
-        private val stroke = Paint().apply { color = 0xFF00AAFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 4f }
+        private val stroke = Paint().apply { color = 0xFF00AAFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f }
         private val solid = Paint().apply { color = 0xFF00AAFF.toInt(); style = Paint.Style.FILL }
         private val txt = Paint().apply { color = Color.WHITE; textSize = 40f; isFakeBoldText = true }
         private val loc = IntArray(2)
@@ -217,21 +217,21 @@ class SelectorOverlay(
                 }
             }
             point?.let {
-                c.drawCircle(it.x.toFloat(), it.y.toFloat(), 36f, stroke)
-                c.drawLine(it.x - 60f, it.y.toFloat(), it.x + 60f, it.y.toFloat(), stroke)
-                c.drawLine(it.x.toFloat(), it.y - 60f, it.x.toFloat(), it.y + 60f, stroke)
+                c.drawCircle(it.x.toFloat(), it.y.toFloat(), 16f, stroke)
+                c.drawLine(it.x - 30f, it.y.toFloat(), it.x + 30f, it.y.toFloat(), stroke)
+                c.drawLine(it.x.toFloat(), it.y - 30f, it.x.toFloat(), it.y + 30f, stroke)
             }
             val a = sw1
             val b = sw2
             if (a != null && b != null) {
                 c.drawLine(a.x.toFloat(), a.y.toFloat(), b.x.toFloat(), b.y.toFloat(), stroke)
-                c.drawCircle(a.x.toFloat(), a.y.toFloat(), 30f, stroke)
-                c.drawCircle(b.x.toFloat(), b.y.toFloat(), 14f, solid)
+                c.drawCircle(a.x.toFloat(), a.y.toFloat(), 14f, stroke)
+                c.drawCircle(b.x.toFloat(), b.y.toFloat(), 6f, solid)
                 val ang = atan2((b.y - a.y).toDouble(), (b.x - a.x).toDouble())
                 for (d in doubleArrayOf(2.6, -2.6)) {
                     c.drawLine(
                         b.x.toFloat(), b.y.toFloat(),
-                        b.x + (60 * cos(ang + d)).toFloat(), b.y + (60 * sin(ang + d)).toFloat(), stroke,
+                        b.x + (30 * cos(ang + d)).toFloat(), b.y + (30 * sin(ang + d)).toFloat(), stroke,
                     )
                 }
             }
