@@ -44,8 +44,7 @@ class ActionEditorOverlay(
     private var sel: TouchAct? = null
     private var drawing = true
     private var panelOpen = false   // cửa sổ cài đặt chỉ mở khi giữ 0,8 giây vào một điểm
-    private var handleAdded = false
-    private val handle = TextView(ctx)
+    private val handle = DragHandle(ctx) { setBarVisible(true) }
 
     private val dv = CanvasView(ctx)
     private val bar = LinearLayout(ctx)
@@ -59,11 +58,6 @@ class ActionEditorOverlay(
         LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
         LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
     ).apply { y = 100 }
-
-    private val handleLp = params(
-        LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END,
-        LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_NOT_TOUCH_MODAL,
-    ).apply { x = dp(12); y = dp(100) }
 
     private fun params(w: Int, h: Int, g: Int, flags: Int) = LayoutParams(
         w, h, LayoutParams.TYPE_APPLICATION_OVERLAY, flags, PixelFormat.TRANSLUCENT,
@@ -127,34 +121,19 @@ class ActionEditorOverlay(
         bar.addView(panel)
         bar.addView(row)
 
-        handle.apply {
-            text = "☰"; textSize = 20f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-            background = GradientDrawable().apply { setColor(0xCC000000.toInt()); cornerRadius = dpf(22) }
-            setOnClickListener { setBarVisible(true) }
-        }
-
         wm.addView(dv, dvLp)
         wm.addView(bar, barLp)
         refreshPanel()
     }
 
-    /** Ẩn / hiện thanh thao tác phía dưới (khi ẩn có nút ☰ nhỏ để hiện lại). */
+    /** Ẩn / hiện thanh thao tác phía dưới (khi ẩn có nút ☰ nhỏ để hiện lại, giữ và kéo để dời chỗ). */
     private fun setBarVisible(v: Boolean) {
         bar.visibility = if (v) View.VISIBLE else View.GONE
-        if (!v && !handleAdded) {
-            handleAdded = runCatching { wm.addView(handle, handleLp) }.isSuccess
-        } else if (v && handleAdded) {
-            runCatching { wm.removeView(handle) }
-            handleAdded = false
-        }
+        if (v) handle.hide() else handle.show()
     }
 
     fun hide() {
-        if (handleAdded) {
-            runCatching { wm.removeView(handle) }
-            handleAdded = false
-        }
+        handle.hide()
         runCatching { wm.removeView(dv) }
         runCatching { wm.removeView(bar) }
     }

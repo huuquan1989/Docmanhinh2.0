@@ -48,6 +48,7 @@ class SelectorOverlay(
 
     private val dv = DrawView(ctx)
     private val bar = LinearLayout(ctx)
+    private val handle = DragHandle(ctx) { setBarVisible(true) }
 
     private val dvLp = params(
         LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, 0,
@@ -88,10 +89,13 @@ class SelectorOverlay(
         }
         val toggle = Button(ctx)
         fun mk(t: String, f: () -> Unit) = Button(ctx).apply {
-            text = t; isAllCaps = false; setOnClickListener { f() }
+            text = t; isAllCaps = false; textSize = 13f
+            minWidth = 0; minimumWidth = 0; setPadding(8, 0, 8, 0)
+            setOnClickListener { f() }
         }
         toggle.apply {
-            text = "✋ Thao tác"; isAllCaps = false
+            text = "✋ Thao tác"; isAllCaps = false; textSize = 13f
+            minWidth = 0; minimumWidth = 0; setPadding(8, 0, 8, 0)
             setOnClickListener {
                 drawing = !drawing
                 dvLp.flags = if (drawing) dvLp.flags and LayoutParams.FLAG_NOT_TOUCHABLE.inv()
@@ -105,6 +109,7 @@ class SelectorOverlay(
         row.addView(toggle)
         row.addView(mk("⌫ Xoá") { rects.clear(); cur = null; point = null; sw1 = null; sw2 = null; dv.invalidate() })
         row.addView(mk("✖ Huỷ") { hide(); onCancel() })
+        row.addView(mk("▾ Ẩn") { setBarVisible(false) })
         bar.orientation = LinearLayout.VERTICAL
         bar.addView(hint)
         bar.addView(row)
@@ -113,7 +118,14 @@ class SelectorOverlay(
         wm.addView(bar, barLp)
     }
 
+    /** Ẩn / hiện thanh công cụ (khi ẩn có nút ☰ nhỏ để hiện lại, giữ và kéo để dời chỗ). */
+    private fun setBarVisible(v: Boolean) {
+        bar.visibility = if (v) View.VISIBLE else View.GONE
+        if (v) handle.hide() else handle.show()
+    }
+
     fun hide() {
+        handle.hide()
         runCatching { wm.removeView(dv) }
         runCatching { wm.removeView(bar) }
     }
