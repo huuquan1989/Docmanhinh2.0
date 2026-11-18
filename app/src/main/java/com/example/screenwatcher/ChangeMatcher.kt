@@ -284,13 +284,29 @@ object ChangeMatcher {
             var d: Double
             var px = bx.l + bx.w / 2
             var py = bx.t + bx.h / 2
+            var note = ""
+            var vb: List<BlockViz> = emptyList()
             if (isText) {
-                d = textDiff(TextMatcher.fold(e.text), TextMatcher.fold(TextMatcher.readNorm(crop)))
+                val cur = TextMatcher.readNorm(crop)
+                d = textDiff(TextMatcher.fold(e.text), TextMatcher.fold(cur))
+                note = "gốc \"${e.text.take(24)}\" → nay \"${cur.take(24)}\""
             } else {
                 val df = imageDiff(e.snap, snap(crop))
                 d = df.score
-                px = bx.l + df.cx * bx.w / e.snap.w   // tâm chỗ đổi, đổi ra toạ độ màn hình
-                py = bx.t + df.cy * bx.h / e.snap.h
+                val sn = e.snap
+                px = bx.l + df.cx * bx.w / sn.w   // tâm chỗ đổi, đổi ra toạ độ màn hình
+                py = bx.t + df.cy * bx.h / sn.h
+                if (dbg != null) {
+                    vb = df.blocks.map {
+                        BlockViz(
+                            Rect(
+                                bx.l + it[0] * bx.w / sn.w, bx.t + it[1] * bx.h / sn.h,
+                                bx.l + it[2] * bx.w / sn.w, bx.t + it[3] * bx.h / sn.h,
+                            ),
+                            it[4] / 100.0,
+                        )
+                    }
+                }
             }
             if (crop !== frame) crop.recycle()
             dbg?.add(RegionViz(Rect(bx.l, bx.t, bx.r, bx.b), d, note, vb))
