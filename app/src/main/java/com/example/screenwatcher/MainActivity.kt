@@ -351,6 +351,7 @@ class MainActivity : ComponentActivity() {
         status.text = "Hiển thị trên app khác: ${m(Settings.canDrawOverlays(this))}   " +
             "Trợ năng: ${m(AutoClickService.instance != null)}   " +
             "Chụp màn hình: ${m(AppState.projectionReady)}" +
+            ProfileStore.activeNames(this).let { if (it.isEmpty()) "" else "\nĐang dùng: " + it.joinToString(" + ") } +
             (if (AppState.monitoring && AppState.seqStatus.isNotEmpty()) "\n${AppState.seqStatus}" else "")
         updating = true
         monitorSwitch.isChecked = AppState.monitoring

@@ -114,6 +114,14 @@ object RuleStore {
 
     fun templateFile(c: Context, id: String) = File(c.filesDir, "tpl_$id.png")
 
+    /** Các bộ luật đang được nạp / gộp trong danh sách luật hiện tại (id), theo thứ tự nạp. */
+    fun activeProfiles(c: Context): List<String> = runCatching {
+        val a = JSONArray(prefs(c).getString("activeProfiles", "[]"))
+        List(a.length()) { a.getString(it) }
+    }.getOrDefault(emptyList())
+    fun setActiveProfiles(c: Context, ids: List<String>) =
+        prefs(c).edit().putString("activeProfiles", JSONArray(ids).toString()).apply()
+
     fun bubbleOn(c: Context): Boolean = prefs(c).getBoolean("bubble", true)
     fun setBubbleOn(c: Context, on: Boolean) = prefs(c).edit().putBoolean("bubble", on).apply()
     fun bubblePos(c: Context): Pair<Int, Int> = prefs(c).getInt("bx", 0) to prefs(c).getInt("by", 300)

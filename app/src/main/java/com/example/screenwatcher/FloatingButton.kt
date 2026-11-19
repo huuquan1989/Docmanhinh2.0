@@ -308,6 +308,8 @@ class FloatingButton(
             setPadding(0, 0, 0, dp(4))
         })
         val profiles = ProfileStore.list(ctx)
+        val activeIds = RuleStore.activeProfiles(ctx)
+        panel.addView(activeLine())
         val list = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         if (profiles.isEmpty()) {
             list.addView(TextView(c).apply {
@@ -318,11 +320,11 @@ class FloatingButton(
         for (p in profiles) {
             val prow = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
             prow.addView(
-                action("📂 ${p.name} (${p.ruleCount})") { onRunProfile(p.id) },
+                action((if (p.id in activeIds) "✔ " else "📂 ") + "${p.name} (${p.ruleCount})") { onRunProfile(p.id) },
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
             )
             prow.addView(
-                action("➕") { onMergeProfile(p.id) },
+                action(if (p.id in activeIds) "✔" else "➕") { onMergeProfile(p.id) },
                 LinearLayout.LayoutParams(dp(44), LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(4) },
             )
             list.addView(
@@ -346,9 +348,18 @@ class FloatingButton(
         panel.addView(row)
     }
 
+    /** Dòng "Đang dùng: A + B + C" — liệt kê tất cả bộ luật đang nạp / gộp. */
+    private fun activeLine() = TextView(c).apply {
+        val names = ProfileStore.activeNames(ctx)
+        text = if (names.isEmpty()) "Đang dùng: (luật chưa lưu thành bộ)" else "Đang dùng: " + names.joinToString(" + ")
+        setTextColor(0xFF81C784.toInt()); textSize = 12f
+        setPadding(0, 0, 0, dp(4))
+    }
+
     private fun buildPanel() {
         panel.removeAllViews()
         if (showProfiles) { buildProfilePanel(); return }
+        panel.addView(activeLine())
 
         if (AppState.monitoring && AppState.seqStatus.isNotEmpty()) {
             panel.addView(TextView(c).apply {

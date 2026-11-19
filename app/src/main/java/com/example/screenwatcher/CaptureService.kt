@@ -154,7 +154,7 @@ class CaptureService : Service() {
             },
             onTestRule = { quickTest(it) },
             onRunProfile = { id -> fab?.collapse(); loadProfile(id, false) },
-            onMergeProfile = { id -> fab?.collapse(); loadProfile(id, false, merge = true) },
+            onMergeProfile = { id -> loadProfile(id, false, merge = true) },
             onHideButton = {
                 RuleStore.setBubbleOn(this, false)
                 fab?.hide()
