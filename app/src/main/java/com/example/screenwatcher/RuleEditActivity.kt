@@ -128,9 +128,9 @@ class RuleEditActivity : Activity() {
         changeGroup.addView(btn("🖼 Chụp lại ảnh gốc của các vùng đã chọn (sau 4 giây)") {
             collect(); RuleStore.upsert(this, rule)
             if (!AppState.projectionReady) {
-                Toast.makeText(this, "Hãy cấp quyền chụp màn hình ở màn hình chính trước", Toast.LENGTH_LONG).show()
+                AppToast.show(this, "Hãy cấp quyền chụp màn hình ở màn hình chính trước", Toast.LENGTH_LONG)
             } else {
-                Toast.makeText(this, "Chuyển sang màn hình gốc trong 4 giây…", Toast.LENGTH_LONG).show()
+                AppToast.show(this, "Chuyển sang màn hình gốc trong 4 giây…", Toast.LENGTH_LONG)
                 startService(
                     Intent(this, CaptureService::class.java).setAction(CaptureService.A_BASELINE).putExtra("id", rule.id),
                 )
@@ -203,9 +203,9 @@ class RuleEditActivity : Activity() {
         root.addView(btn("Thử luật (quét sau 4 giây, chưa chạy macro)") {
             collect(); RuleStore.upsert(this, rule)
             if (!AppState.projectionReady) {
-                Toast.makeText(this, "Hãy cấp quyền chụp màn hình ở màn hình chính trước", Toast.LENGTH_LONG).show()
+                AppToast.show(this, "Hãy cấp quyền chụp màn hình ở màn hình chính trước", Toast.LENGTH_LONG)
             } else {
-                Toast.makeText(this, "Chuyển sang màn hình cần kiểm tra trong 4 giây…", Toast.LENGTH_LONG).show()
+                AppToast.show(this, "Chuyển sang màn hình cần kiểm tra trong 4 giây…", Toast.LENGTH_LONG)
                 startService(
                     Intent(this, CaptureService::class.java).setAction(CaptureService.A_TEST).putExtra("id", rule.id),
                 )
@@ -274,16 +274,16 @@ class RuleEditActivity : Activity() {
         collect()
         RuleStore.upsert(this, rule)
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Cần cấp quyền hiển thị trên ứng dụng khác (bước 1)", Toast.LENGTH_LONG).show(); return
+            AppToast.show(this, "Cần cấp quyền hiển thị trên ứng dụng khác (bước 1)", Toast.LENGTH_LONG); return
         }
         if (!AppState.projectionReady) {
-            Toast.makeText(this, "Cần cấp quyền chụp màn hình (bước 3) trước", Toast.LENGTH_LONG).show(); return
+            AppToast.show(this, "Cần cấp quyền chụp màn hình (bước 3) trước", Toast.LENGTH_LONG); return
         }
         startService(
             Intent(this, CaptureService::class.java)
                 .setAction(CaptureService.A_PICK).putExtra("mode", mode).putExtra("id", rule.id).apply(extra),
         )
-        Toast.makeText(this, "Mở màn hình cần chọn rồi kéo trên lớp phủ. Bấm ✋ để thao tác app, ✏ để vẽ lại.", Toast.LENGTH_LONG).show()
+        AppToast.show(this, "Mở màn hình cần chọn rồi kéo trên lớp phủ. Bấm ✋ để thao tác app, ✏ để vẽ lại.", Toast.LENGTH_LONG)
         finish()
     }
 }

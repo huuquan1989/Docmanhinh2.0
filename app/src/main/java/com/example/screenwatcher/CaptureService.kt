@@ -112,13 +112,13 @@ class CaptureService : Service() {
     private fun loadProfile(id: String, run: Boolean, merge: Boolean = false) {
         val name = ProfileStore.list(this).firstOrNull { it.id == id }?.name
         if (name == null || !ProfileStore.load(this, id, merge)) {
-            Toast.makeText(this, "Không nạp được bộ luật", Toast.LENGTH_LONG).show()
+            AppToast.show(this, "Không nạp được bộ luật", Toast.LENGTH_LONG)
             return
         }
         if (merge) {
             // gộp thêm: giữ nguyên các luật đang chạy, bộ luật mới tham gia từ lần quét kế tiếp
             AppState.log("➕ Đã gộp bộ luật '$name' (chạy song song)")
-            Toast.makeText(this, "Đã gộp '$name' — các bộ luật chạy song song", Toast.LENGTH_SHORT).show()
+            AppToast.show(this, "Đã gộp '$name' — các bộ luật chạy song song", Toast.LENGTH_SHORT)
             fab?.refresh()
             return
         }
@@ -128,13 +128,13 @@ class CaptureService : Service() {
         if (AppState.monitoring) setMonitoring(false) // dừng vòng cũ để chạy lại từ đầu
         if (run) {
             if (projection == null) {
-                Toast.makeText(this, "Đã nạp '$name'. Cần cấp quyền chụp màn hình để chạy.", Toast.LENGTH_LONG).show()
+                AppToast.show(this, "Đã nạp '$name'. Cần cấp quyền chụp màn hình để chạy.", Toast.LENGTH_LONG)
             } else {
                 setMonitoring(true)
-                Toast.makeText(this, "Đang chạy bộ luật '$name'", Toast.LENGTH_SHORT).show()
+                AppToast.show(this, "Đang chạy bộ luật '$name'", Toast.LENGTH_SHORT)
             }
         } else {
-            Toast.makeText(this, "Đã nạp bộ luật '$name'", Toast.LENGTH_SHORT).show()
+            AppToast.show(this, "Đã nạp bộ luật '$name'", Toast.LENGTH_SHORT)
         }
         fab?.refresh()
     }
@@ -158,7 +158,7 @@ class CaptureService : Service() {
             onHideButton = {
                 RuleStore.setBubbleOn(this, false)
                 fab?.hide()
-                Toast.makeText(this, "Đã ẩn nút nổi. Bật lại trong app ở mục \"Hiện nút nổi\".", Toast.LENGTH_LONG).show()
+                AppToast.show(this, "Đã ẩn nút nổi. Bật lại trong app ở mục \"Hiện nút nổi\".", Toast.LENGTH_LONG)
             },
         ).also { fab = it }
         f.show()
@@ -389,15 +389,13 @@ class CaptureService : Service() {
         val rule = RuleStore.get(this, id) ?: return
         fab?.hide()
         scope.launch {
-            delay(4000)
+            delay(3400)
+            AppToast.cancel() // toast "Chuyển sang màn hình gốc…" không được lọt vào ảnh gốc
+            delay(600)
             val f = grab()
             val n = if (f == null) 0 else try { ChangeMatcher.recaptureOriginals(this@CaptureService, rule, f) } catch (e: CancellationException) { throw e } catch (e: Exception) { 0 }
             main.post {
-                Toast.makeText(
-                    this@CaptureService,
-                    if (n > 0) "Đã chụp lại ảnh gốc $n vùng của '${rule.name}'" else "Không chụp được ảnh gốc (chưa có vùng?)",
-                    Toast.LENGTH_LONG,
-                ).show()
+                AppToast.show(this@CaptureService, if (n > 0) "Đã chụp lại ảnh gốc $n vùng của '${rule.name}'" else "Không chụp được ảnh gốc (chưa có vùng?)", Toast.LENGTH_LONG)
                 showBubble()
             }
         }
@@ -458,6 +456,7 @@ class CaptureService : Service() {
         val rule = RuleStore.get(this, id) ?: return
         fab?.hide()
         scope.launch {
+            AppToast.cancel()
             delay(800)
             val frame: Bitmap?
             val hit: Hit?
@@ -471,7 +470,7 @@ class CaptureService : Service() {
             AppState.log("Thử nhanh '${rule.name}': $msg")
             val viz = if (frame != null) buildViz(rule, hit, frame, msg) else null
             main.post {
-                if (viz != null) showViz(viz) else Toast.makeText(this@CaptureService, "'${rule.name}': $msg", Toast.LENGTH_LONG).show()
+                if (viz != null) showViz(viz) else AppToast.show(this@CaptureService, "'${rule.name}': $msg", Toast.LENGTH_LONG)
                 showBubble()
             }
         }
@@ -480,7 +479,9 @@ class CaptureService : Service() {
     private fun test(id: String) {
         val rule = RuleStore.get(this, id) ?: return
         scope.launch {
-            delay(4000) // thời gian để người dùng chuyển sang màn hình cần kiểm tra
+            delay(3400) // thời gian để người dùng chuyển sang màn hình cần kiểm tra
+            AppToast.cancel() // toast "Chuyển sang màn hình cần kiểm tra…" không được lọt vào khung hình
+            delay(600)
             val frame: Bitmap?
             val hit: Hit?
             frame = grab()
@@ -493,7 +494,7 @@ class CaptureService : Service() {
             AppState.log("Thử '${rule.name}': $msg")
             val viz = if (frame != null) buildViz(rule, hit, frame, msg) else null
             main.post {
-                if (viz != null) showViz(viz) else Toast.makeText(this@CaptureService, "Thử '${rule.name}': $msg", Toast.LENGTH_LONG).show()
+                if (viz != null) showViz(viz) else AppToast.show(this@CaptureService, "Thử '${rule.name}': $msg", Toast.LENGTH_LONG)
             }
         }
     }
@@ -503,7 +504,7 @@ class CaptureService : Service() {
     private fun pick(mode: String, id: String, kind: String = "tap", ms: Long = 60L, times: Int = 1, gap: Long = 150L) {
         if (mode == "ACTIONS") { pickActions(id); return }
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Cần cấp quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG).show()
+            AppToast.show(this, "Cần cấp quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG)
             return
         }
         overlay?.hide()
@@ -520,6 +521,7 @@ class CaptureService : Service() {
                         RuleStore.upsert(this, rule)
                         AppState.log("Đã thêm ${rects.size} vùng cho '${rule.name}'")
                         // chờ lớp phủ chọn biến mất rồi cắt đúng vùng vừa khoanh làm ẢNH GỐC, xong mới mở lại màn hình sửa luật
+                        AppToast.cancel() // toast còn hiện sẽ bị chụp vào ảnh gốc
                         main.postDelayed({
                             scope.launch {
                                 val f = grab()
@@ -530,7 +532,7 @@ class CaptureService : Service() {
                                 }
                                 main.post { showBubble(); reopenEditor(id) }
                             }
-                        }, 450)
+                        }, 700)
                     }
                     "POINT" -> {
                         if (pt != null) {
@@ -568,7 +570,7 @@ class CaptureService : Service() {
     private fun pickActions(id: String) {
         val rule = RuleStore.get(this, id) ?: return
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Cần cấp quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG).show()
+            AppToast.show(this, "Cần cấp quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG)
             return
         }
         overlay?.hide(); overlay = null
@@ -601,7 +603,7 @@ class CaptureService : Service() {
     private fun saveTemplate(rule: Rule, rg: Region) {
         val f = grab()
         if (f == null) {
-            Toast.makeText(this, "Không lấy được khung hình", Toast.LENGTH_LONG).show(); return
+            AppToast.show(this, "Không lấy được khung hình", Toast.LENGTH_LONG); return
         }
         val l = rg.l.coerceIn(0, f.width - 1)
         val t = rg.t.coerceIn(0, f.height - 1)
